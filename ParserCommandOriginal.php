@@ -853,6 +853,14 @@ class ParserCommandOriginal extends Command
      */
     public function parseElements ($bbox, $elements, $classes_parent = [], $classes_child = [])
     {
+        // Отсекаем полностью пустые контейнеры/элементы без html/изображений
+        $elements = array_values(array_filter($elements, function ($el) {
+            return !$this->isElementEmpty($el);
+        }));
+        if (empty($elements)) {
+            return;
+        }
+
         if (count($elements) == 1)
         {
             $element = $elements[0];
@@ -902,10 +910,8 @@ class ParserCommandOriginal extends Command
                 foreach ($row['children'] as $child)
                 {
                     $row_classes_child_local = $row_classes_child;
-                    if ($child['block_type'] == 'Col')
-                    {
-                        $row_classes_child_local[] = $this->visionChildWidthClasses($row['bbox'], $child['bbox']);
-                    }
+                    // Любой дочерний блок получает ширину по bbox (даже если это не Col), чтобы сохранить горизонтальное расположение
+                    $row_classes_child_local[] = $this->visionChildWidthClasses($row['bbox'], $child['bbox']);
 
                     $this->parseElements($row['bbox'], [$child], $row_classes_parent, $row_classes_child_local);
                 }
@@ -925,6 +931,11 @@ class ParserCommandOriginal extends Command
                 return !preg_match('/^col(-[a-z]+)?-\\d+$/', $class);
             }));
             $classes_child[] = 'col-12';
+        }
+        else
+        {
+            // Для любых других элементов тоже задаём ширину по bbox, иначе они растягиваются на всю строку
+            $classes_child[] = $this->visionChildWidthClasses($bbox_parent, $element['bbox']);
         }
 
         // Ширина строки
@@ -949,8 +960,7 @@ class ParserCommandOriginal extends Command
             $classes_parent[] = 'justify-content-center';
         }
 
-        // Для единственного элемента ширину не считаем — уже выставлен col-12
-
+        // Убираем дубликаты
         $classes_parent = array_values(array_unique($classes_parent));
         $classes_child = array_values(array_unique($classes_child));
     }
@@ -1041,6 +1051,20 @@ class ParserCommandOriginal extends Command
             // Передаем текущие классы вниз, чтобы потомки могли корректно рассчитать выравнивание/ширину
             $this->parseElements($element['bbox'], $element['children'], $classes_parent, $classes_child);
 
+            if (!empty($classes_child))
+            {
+                $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
+            }
+            if (!empty($classes_parent))
+            {
+                $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
+            }
+
+            return;
+        }
+        elseif (collect(['Row', 'Col', 'PictureGroup'])->contains($element['block_type']) && empty($element['children']))
+        {
+            // Не выводим пустые контейнеры
             if (!empty($classes_child))
             {
                 $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
@@ -1537,6 +1561,39 @@ class ParserCommandOriginal extends Command
         self::$struktures[] = $template;
 
         return $template;
+    }
+
+    /**
+     * Проверяем, есть ли у элемента смысл для вывода
+     */
+    public function isElementEmpty ($element) : bool
+    {
+        $blockType = $element['block_type'] ?? '';
+        $children = $element['children'] ?? [];
+        $html = $element['html'] ?? '';
+        $images = $element['images'] ?? [];
+
+        // Пустые контейнеры без детей
+        if (collect(['Row', 'Col', 'PictureGroup'])->contains($blockType) && empty($children)) {
+            return true;
+        }
+
+        // Пустые списки/таблицы
+        if (collect(['ListGroup', 'Table'])->contains($blockType) && empty($children)) {
+            return true;
+        }
+
+        // Элементы без html/изображений
+        if (collect(['SectionHeader', 'Text', 'ListItem', 'Caption', 'TableCell', 'PageHeader', 'PageFooter'])->contains($blockType) && !strlen(trim($html))) {
+            return true;
+        }
+
+        // Картинки без изображений
+        if ($blockType === 'Picture' && empty($images)) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
