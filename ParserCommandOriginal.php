@@ -1024,7 +1024,7 @@ class ParserCommandOriginal extends Command
     //$this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes_parent) . '">');
 
     // Переделка функции ниже parseElement
-    public function structurePrepareElement ($bbox, $element, $classes_parent = [], $classes_child = [])
+    public function structurePrepareElement ($bbox, $element, $classes_parent = [], $classes_child = [], $wrap = true)
     {
         // Выкинем сразу пустые
         if (collect(['SectionHeader', 'Text', 'ListGroup', 'ListItem'])->contains($element['block_type']))
@@ -1036,11 +1036,11 @@ class ParserCommandOriginal extends Command
             if (empty($element['images'])) return  false;
         }
 
-        if (!empty($classes_parent))
+        if ($wrap && !empty($classes_parent))
         {
             $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes_parent) . '">');
         }
-        if (!empty($classes_child))
+        if ($wrap && !empty($classes_child))
         {
             $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes_child) . '">');
         }
@@ -1051,11 +1051,11 @@ class ParserCommandOriginal extends Command
             // Передаем текущие классы вниз, чтобы потомки могли корректно рассчитать выравнивание/ширину
             $this->parseElements($element['bbox'], $element['children'], $classes_parent, $classes_child);
 
-            if (!empty($classes_child))
+            if ($wrap && !empty($classes_child))
             {
                 $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
             }
-            if (!empty($classes_parent))
+            if ($wrap && !empty($classes_parent))
             {
                 $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
             }
@@ -1065,11 +1065,11 @@ class ParserCommandOriginal extends Command
         elseif (collect(['Row', 'Col', 'PictureGroup'])->contains($element['block_type']) && empty($element['children']))
         {
             // Не выводим пустые контейнеры
-            if (!empty($classes_child))
+            if ($wrap && !empty($classes_child))
             {
                 $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
             }
-            if (!empty($classes_parent))
+            if ($wrap && !empty($classes_parent))
             {
                 $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
             }
@@ -1139,7 +1139,10 @@ class ParserCommandOriginal extends Command
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<ul class="col-12">');
             $this->structureAppend(self::CONTENT_TYPE_HTML, '<ul>');
 
-            $this->parseElements($element['bbox'], $element['children'], $classes_parent, $classes_child);
+            // Рендерим пункты списка без оберток row/col, сохраняем порядок детей
+            foreach ($element['children'] as $listChild) {
+                $this->structurePrepareElement($element['bbox'], $listChild, [], [], false);
+            }
 
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</ul>');
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '</div>');
@@ -1219,11 +1222,11 @@ class ParserCommandOriginal extends Command
             }
         }
 
-        if (!empty($classes_child))
+        if ($wrap && !empty($classes_child))
         {
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
         }
-        if (!empty($classes_parent))
+        if ($wrap && !empty($classes_parent))
         {
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
         }
@@ -2090,6 +2093,22 @@ class ParserCommandOriginal extends Command
     }
 
     /**
+     * Найти кластер для пересечений по высоте с допуском
+     */
+    public function clusterFindKeyIsIntersectByHeight ($clusters, $bbox, $tolerance = 0)
+    {
+        foreach ($clusters as $cluster_key => $cluster)
+        {
+            if ($this->isBboxIntersectsByHeight($cluster['bbox'], $bbox, $tolerance))
+            {
+                return $cluster_key;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * $container = [x, y, x2, y2]
      * Нам известно, что все BBOX в какой-то степени пересекаются по высоте
      * 1. Мы отсортировали из по позиции с лева на право
@@ -2117,7 +2136,8 @@ class ParserCommandOriginal extends Command
 
         foreach ($elements as $element)
         {
-            if ($cluster_key = $this->clusterFindKeyIsIntersectByWitdh($clusters, $element['bbox']))
+            // Считаем, что элементы одной строки пересекаются по высоте (с допуском)
+            if ($cluster_key = $this->clusterFindKeyIsIntersectByHeight($clusters, $element['bbox'], 10))
             {
                 $clusters[$cluster_key]['children'][] = $element;
                 $clusters[$cluster_key]['bbox'] = $this->mergeBboxes($clusters[$cluster_key]['bbox'], $element['bbox']);
@@ -2238,7 +2258,7 @@ class ParserCommandOriginal extends Command
                     .page_content { background-color: #fff; border: 1px solid #424242ff; padding: 30px; border-radius: 10px }
                     .page_title { font-size: 2rem; color: #fff; text-align: center; margin: 50px 0 20px 0; font-weight: bold }
                     img { max-width: 100% }
-                    ul { list-style: none; padding-left: 0 }
+                    ul { list-style: disc; padding-left: 20px; }
                 </style>
                 </head>
                 <body>
