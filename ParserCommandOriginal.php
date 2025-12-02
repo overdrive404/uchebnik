@@ -2152,30 +2152,22 @@ class ParserCommandOriginal extends Command
                 <div class="container m-4">
         ');
 
-        $current_page = 0;
+        // Группируем элементы по номеру страницы и выводим каждую страницу цельным блоком.
+        $pages = collect($data)->groupBy('page')->sortKeys();
 
-        foreach ($data as $element_id => $element_data)
-        {
-            if ($current_page && $current_page != $element_data['page'])
-            {
-                $content .= '</div>';
+        foreach ($pages as $pageNumber => $elements) {
+            $content .= '<h2 class="page_title">Страница ' . $pageNumber . '</h2>';
+            $content .= '<div class="page_content">';
+
+            foreach ($elements as $element) {
+                $content .= $element['text'];
             }
 
-            if ($current_page != $element_data['page'])
-            {
-                $content .= '<h2 class="page_title">Страница ' . $element_data['page'] . '</h2>';
-                $content .= '<div class="page_content">';
-                $current_page = $element_data['page'];
-            }
-
-            $content .= $element_data['text'];
-
-
+            $content .= '</div>';
         }
 
-        $content .= ('
-            </div></body></html>
-        ');
+        // Закрываем контейнер и документ.
+        $content .= '</div></body></html>';
 
         if (!is_dir($file_directory))
         {
