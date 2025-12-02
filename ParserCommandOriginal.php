@@ -1038,7 +1038,8 @@ class ParserCommandOriginal extends Command
         // Если это контейнер (Row/Col/PictureGroup), сначала отрисуем обертки, затем спустимся внутрь детей
         if (collect(['Row', 'Col', 'PictureGroup'])->contains($element['block_type']) && !empty($element['children']))
         {
-            $this->parseElements($element['bbox'], $element['children'], [], []);
+            // Передаем текущие классы вниз, чтобы потомки могли корректно рассчитать выравнивание/ширину
+            $this->parseElements($element['bbox'], $element['children'], $classes_parent, $classes_child);
 
             if (!empty($classes_child))
             {
