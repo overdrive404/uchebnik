@@ -595,6 +595,21 @@ class ParserCommandOriginal extends Command
             $parent['block_classes'][] = strtolower($parent['block_type']);
         }
 
+        $isSingleColInRow = $parent['block_type'] == 'Row' && $child['block_type'] == 'Col';
+
+        // Для единственной колонки сразу даем полную ширину
+        if ($isSingleColInRow)
+        {
+            $child['block_classes'] = array_values(array_filter($child['block_classes'], function ($class) {
+                return !preg_match('/^col(-[a-z]+)?-\\d+$/', $class);
+            }));
+            $child['block_classes'][] = 'col-12';
+            $parent['block_classes'][] = 'justify-content-start';
+            $parent['block_classes'] = array_values(array_unique($parent['block_classes']));
+            $child['block_classes'] = array_values(array_unique($child['block_classes']));
+            return;
+        }
+
         if ($this->visionChildIsFullWidth($parent['bbox'], $child['bbox']))
         {
             if ($parent['block_type'] == 'Row') $parent['block_classes'][] = 'justify-content-start';
@@ -839,7 +854,7 @@ class ParserCommandOriginal extends Command
             // Гарантируем наличие хотя бы базового класса col, если элемент в строке и это колонка без классов
             if ($element['block_type'] == 'Col' && empty($classes_child))
             {
-                $classes_child[] = 'col';
+                $classes_child[] = 'col-12';
             }
 
             //$this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes_parent) . '">');
@@ -896,11 +911,20 @@ class ParserCommandOriginal extends Command
      */
     public function calcClassesSingleChild ($bbox_parent, $element, array &$classes_parent, array &$classes_child, $html = '')
     {
+        // Единственный элемент-колонка должен занимать всю ширину
+        if ($element['block_type'] == 'Col')
+        {
+            $classes_child = array_values(array_filter($classes_child, function ($class) {
+                return !preg_match('/^col(-[a-z]+)?-\\d+$/', $class);
+            }));
+            $classes_child[] = 'col-12';
+        }
+
         // Ширина строки
         if ($this->visionChildIsFullWidth($bbox_parent, $element['bbox']))
         {
             $classes_parent[] = 'justify-content-start';
-            if ($element['block_type'] == 'Col') $classes_child[] = 'col-md-12';
+            if ($element['block_type'] == 'Col') $classes_child[] = 'col-12';
             return;
         }
 
@@ -918,10 +942,7 @@ class ParserCommandOriginal extends Command
             $classes_parent[] = 'justify-content-center';
         }
 
-        if ($element['block_type'] == 'Col')
-        {
-            $classes_child[] = $this->visionChildWidthClasses($bbox_parent, $element['bbox']);
-        }
+        // Для единственного элемента ширину не считаем — уже выставлен col-12
 
         $classes_parent = array_values(array_unique($classes_parent));
         $classes_child = array_values(array_unique($classes_child));
