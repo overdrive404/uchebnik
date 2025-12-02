@@ -832,10 +832,17 @@ class ParserCommandOriginal extends Command
             $row_classes = $children_data['block_classes'] ?? [];
             foreach ($children_data['children'] as $col_data)
             {
-                if (empty($col_data['children'])) continue;
-
                 $col_classes = $col_data['block_classes'] ?? [];
-                $this->parseElements($children_data['bbox'], $col_data['children'], $row_classes, $col_classes);
+
+                // Если у элемента есть потомки, спускаемся в них; иначе рендерим сам элемент
+                if (!empty($col_data['children']))
+                {
+                    $this->parseElements($children_data['bbox'], $col_data['children'], $row_classes, $col_classes);
+                }
+                else
+                {
+                    $this->parseElements($children_data['bbox'], [$col_data], $row_classes, $col_classes);
+                }
             }
         }
     }
@@ -1028,6 +1035,23 @@ class ParserCommandOriginal extends Command
             $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes_child) . '">');
         }
 
+        // Если это контейнер (Row/Col/PictureGroup), сначала отрисуем обертки, затем спустимся внутрь детей
+        if (collect(['Row', 'Col', 'PictureGroup'])->contains($element['block_type']) && !empty($element['children']))
+        {
+            $this->parseElements($element['bbox'], $element['children'], [], []);
+
+            if (!empty($classes_child))
+            {
+                $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
+            }
+            if (!empty($classes_parent))
+            {
+                $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
+            }
+
+            return;
+        }
+
         /*
         $this->info('structurePrepareElement()');
         $this->info(print_r($bbox, true));
@@ -1065,6 +1089,17 @@ class ParserCommandOriginal extends Command
             $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>');
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '</div>');
+        }
+
+        elseif ($element['block_type'] == 'Caption')
+        {
+            if (!strlen(trim($element['html']))) return false;
+
+            [$element_tag, $element_text] = $this->parseElementsHtml($element['html']);
+
+            $this->structureAppend(self::CONTENT_TYPE_HTML, '<' . $element_tag . '>');
+            $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>');
+            $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
         }
 
         elseif ($element['block_type'] == 'ListGroup')
