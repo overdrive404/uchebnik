@@ -251,6 +251,8 @@ class ParserCommandOriginal extends Command
 
         $this->info('Step: clusters()');
         $this->clusters(self::$fileContent['children']);
+        $this->info('Step: sortClustersByPage()');
+        $this->sortClustersByPage();
 
         $this->info('Step: beforeClassify()');
         $this->beforeClassify();
@@ -311,7 +313,19 @@ class ParserCommandOriginal extends Command
             if ($child['block_type'] == 'Page')
             {
                 $block = $this->clustersPrepareBlock($child);
-                self::$clusters['children'][] = $block;
+                $pageIndex = $this->clustersFindPageIndex($pageNumber);
+
+                if ($pageIndex !== false)
+                {
+                    // Если ранее уже была создана страница (например, при попадании ее детей раньше),
+                    // обновляем сам блок, но сохраняем уже добавленных детей
+                    $block['children'] = self::$clusters['children'][$pageIndex]['children'];
+                    self::$clusters['children'][$pageIndex] = $block;
+                }
+                else
+                {
+                    self::$clusters['children'][] = $block;
+                }
             }
             else
             {
@@ -327,15 +341,36 @@ class ParserCommandOriginal extends Command
     }
 
     /**
+     * Упорядочиваем страницы по номеру, чтобы вывод соответствовал оригинальной пагинации
+     */
+    public function sortClustersByPage ()
+    {
+        if (empty(self::$clusters['children'])) return;
+
+        usort(self::$clusters['children'], function ($a, $b) {
+            return ((int) ($a['block_page'] ?? 0)) <=> ((int) ($b['block_page'] ?? 0));
+        });
+    }
+
+    /**
      * Ищем куда мы можем впихнуть элемент
      */
     public function clustersPush ($element)
     {
         $this->info('clustersPush(): ' . $element['id']);
 
-        // Так как мы добавляем последовательно на страницы, то берем кластер последней
-        $clusters = &self::$clusters['children'][array_key_last(self::$clusters['children'])];
-        $searched = self::$clusters['children'][array_key_last(self::$clusters['children'])];
+        // Берем кластер нужной страницы, а не просто последний
+        $elementPage = (int) $this->getMetaData($element['id'])[self::META_PAGE];
+        $pageIndex = $this->clustersFindPageIndex($elementPage);
+
+        if ($pageIndex === false)
+        {
+            self::$clusters['children'][] = $this->clustersCreatePageStub($elementPage, $element['bbox']);
+            $pageIndex = array_key_last(self::$clusters['children']);
+        }
+
+        $clusters = &self::$clusters['children'][$pageIndex];
+        $searched = self::$clusters['children'][$pageIndex];
 
         $process = false;
 
@@ -758,7 +793,9 @@ class ParserCommandOriginal extends Command
         */
     public function parsePage ($index, $data)
     {
-        self::$strukturesPage += 1;
+        // Привязываемся к реальному номеру страницы из данных, а не к порядку обхода
+        $pageNumber = isset($data['block_page']) ? (int) $data['block_page'] : ($index + 1);
+        self::$strukturesPage = $pageNumber;
         /*
         self::$strukturesPageReal = $data['number'];
         self::$strukturesPageWidth = $data['width'];
@@ -1849,6 +1886,44 @@ class ParserCommandOriginal extends Command
         }
 
         return ($number % 2 === 0 ? self::PAGE_EVEN : self::PAGE_ODD);
+    }
+
+    /**
+     * Найти индекс страницы в корневом кластере по номеру
+     */
+    public function clustersFindPageIndex ($page_number)
+    {
+        if (empty(self::$clusters['children'])) return false;
+
+        foreach (self::$clusters['children'] as $index => $pageCluster)
+        {
+            if (isset($pageCluster['block_page']) && (int) $pageCluster['block_page'] === (int) $page_number)
+            {
+                return $index;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Создает пустой блок страницы, если ее еще не было в общем кластере
+     */
+    public function clustersCreatePageStub ($page_number, $bbox = [])
+    {
+        return [
+            'id' => '/page/' . $page_number . '/Page/0',
+            'block_page' => $page_number,
+            'block_type' => 'Page',
+            'block_classes' => [],
+            'block_styles' => [],
+            'block_hierarchy' => [],
+            'section_hierarchy' => [],
+            'bbox' => $bbox,
+            'html' => '',
+            'images' => [],
+            'children' => [],
+        ];
     }
 
 
