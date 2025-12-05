@@ -861,6 +861,21 @@ class ParserCommandOriginal extends Command
             return;
         }
 
+        // Если перед нами сразу набор пунктов списка, рисуем их единым списком без div-оберток
+        $isPureList = collect($elements)->every(function ($el) {
+            return ($el['block_type'] ?? '') === 'ListItem';
+        });
+        if ($isPureList)
+        {
+            $this->structureAppend(self::CONTENT_TYPE_HTML, '<ul>');
+            foreach ($elements as $element)
+            {
+                $this->structurePrepareElement($bbox, $element, [], [], false);
+            }
+            $this->structureAppend(self::CONTENT_TYPE_HTML, '</ul>');
+            return;
+        }
+
         if (count($elements) == 1)
         {
             $element = $elements[0];
@@ -1153,10 +1168,13 @@ class ParserCommandOriginal extends Command
         elseif ($element['block_type'] == 'ListItem')
         {
             $this->calcParentAndChildrenClasses($bbox, $element['bbox'], $classes_parent, $classes_child);
-            [$element_tag, $element_text] = $this->parseElementsHtml($element['html']);
+            [$element_tag, $element_text, $nested_lists] = $this->parseListItemWithNestedLists($element['html']);
 
             $this->structureAppend(self::CONTENT_TYPE_HTML, '<' . $element_tag . '>');
             $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>');
+            foreach ($nested_lists as $listHtml) {
+                $this->structureAppend(self::CONTENT_TYPE_HTML, $listHtml);
+            }
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
 
             /*
@@ -1290,10 +1308,13 @@ class ParserCommandOriginal extends Command
         elseif ($element['block_type'] == 'ListItem')
         {
             $this->calcParentAndChildrenClasses($bbox, $element['bbox'], $classes_parent, $classes_child);
-            [$element_tag, $element_text] = $this->parseElementsHtml($element['html']);
+            [$element_tag, $element_text, $nested_lists] = $this->parseListItemWithNestedLists($element['html']);
 
             $this->createStructureElement(self::CONTENT_TYPE_HTML, '<' . $element_tag . ' class="' . implode(' ', $classes_child) . '">');
             $this->createStructureElement(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>');
+            foreach ($nested_lists as $listHtml) {
+                $this->createStructureElement(self::CONTENT_TYPE_HTML, $listHtml);
+            }
             $this->createStructureElement(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
 
             /*
@@ -1442,6 +1463,45 @@ class ParserCommandOriginal extends Command
     }
 
 
+
+    /**
+     * Разбираем HTML
+     */
+    public function parseListItemWithNestedLists ($html)
+    {
+        $dom = new DOMDocument('1.0', 'UTF-8');
+        @$dom->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+
+        $elements = $dom->getElementsByTagName('*');
+        if (!$elements->length) {
+            return ['li', '', []];
+        }
+
+        $root = $elements->item(0);
+        $nestedLists = [];
+        $textParts = [];
+
+        foreach ($root->childNodes as $child) {
+            if ($child->nodeType === XML_ELEMENT_NODE && in_array(strtolower($child->nodeName), ['ul', 'ol'])) {
+                $listHtml = $dom->saveHTML($child);
+                $nestedLists[] = $this->sanitizeListHtml($listHtml);
+                continue;
+            }
+
+            $textParts[] = $dom->saveHTML($child);
+        }
+
+        $text = $this->cleanHyphenationText(strip_tags(implode('', $textParts)));
+
+        return [$root->tagName, $text, $nestedLists];
+    }
+
+    protected function sanitizeListHtml ($html)
+    {
+        $html = preg_replace('/\\s?block-type=\"[^\"]*\"/i', '', $html);
+
+        return $html;
+    }
 
     /**
      * Разбираем HTML
