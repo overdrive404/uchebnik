@@ -831,6 +831,12 @@ class ParserCommandOriginal extends Command
         {
             if (empty($children_data['children'])) continue; // строка без детей нам не нужна
 
+            // Если в строке только две картинки — рендерим их вместе
+            if ($this->renderRowWithTwoPictures($children_data))
+            {
+                continue;
+            }
+
             $row_classes = $children_data['block_classes'] ?? [];
             foreach ($children_data['children'] as $col_data)
             {
@@ -847,6 +853,86 @@ class ParserCommandOriginal extends Command
                 }
             }
         }
+    }
+
+    /**
+     * Если строка состоит ровно из двух картинок, выводим их в одном ряду 2х6
+     */
+    public function renderRowWithTwoPictures ($row)
+    {
+        if (($row['block_type'] ?? '') != 'Row') return false;
+
+        $children = $row['children'] ?? [];
+        if (empty($children) || !is_array($children)) return false;
+
+        $pictures = $this->collectPicturesFromRowChildren($children);
+
+        // Применяем правило только если в строке действительно две картинки и других элементов нет
+        if (count($pictures) != 2 || count($pictures) != count($children)) return false;
+
+        $row_classes = $row['block_classes'] ?? [];
+        if (!in_array('row', $row_classes)) $row_classes[] = 'row';
+        $row_classes = array_values(array_filter(array_unique($row_classes)));
+
+        $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $row_classes) . '">');
+
+        foreach ($pictures as $picture)
+        {
+            $classes = $picture['classes'] ?? [];
+            // Сбрасываем текущие ширины, чтобы гарантировать col-md-6 для обеих картинок
+            $classes = array_filter($classes, function ($class) {
+                return !preg_match('/^col(-[a-z]+)?-\\d+$/', $class);
+            });
+            $classes[] = 'col-md-6';
+            $classes = array_values(array_unique($classes));
+
+            $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes) . '">');
+            $this->structurePrepareElement($row['bbox'], $picture['element'], [], [], false);
+            $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
+        }
+
+        $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
+
+        return true;
+    }
+
+    /**
+     * Собираем картинки из детей строки (учитываем вложенные колонки)
+     */
+    public function collectPicturesFromRowChildren ($children)
+    {
+        $pictures = [];
+
+        foreach ($children as $child)
+        {
+            if (($child['block_type'] ?? '') == 'Picture' && !empty($child['images']))
+            {
+                $pictures[] = [
+                    'element' => $child,
+                    'classes' => $child['block_classes'] ?? [],
+                ];
+
+                continue;
+            }
+
+            if (($child['block_type'] ?? '') == 'Col'
+                && !empty($child['children'])
+                && count($child['children']) == 1
+            )
+            {
+                $nested = $child['children'][0];
+
+                if (($nested['block_type'] ?? '') == 'Picture' && !empty($nested['images']))
+                {
+                    $pictures[] = [
+                        'element' => $nested,
+                        'classes' => array_merge($child['block_classes'] ?? [], $nested['block_classes'] ?? []),
+                    ];
+                }
+            }
+        }
+
+        return $pictures;
     }
 
     /**
@@ -1247,9 +1333,27 @@ class ParserCommandOriginal extends Command
         {
             if (empty($element['images'])) return  false;
 
-            foreach ($element['images'] as $image_key => $image_path)
+            $images = array_values($element['images']);
+
+            if (count($images) == 2 && $wrap)
             {
-                $this->structureAppend(self::CONTENT_TYPE_IMAGE, '<img src="../images/' . $image_path . '">');
+                $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="row">');
+
+                foreach ($images as $image_path)
+                {
+                    $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="col-md-6">');
+                    $this->structureAppend(self::CONTENT_TYPE_IMAGE, '<img src="../images/' . $image_path . '">');
+                    $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
+                }
+
+                $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
+            }
+            else
+            {
+                foreach ($images as $image_path)
+                {
+                    $this->structureAppend(self::CONTENT_TYPE_IMAGE, '<img src="../images/' . $image_path . '">');
+                }
             }
         }
 
