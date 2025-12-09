@@ -831,8 +831,8 @@ class ParserCommandOriginal extends Command
         {
             if (empty($children_data['children'])) continue; // строка без детей нам не нужна
 
-            // Если в строке только две картинки — рендерим их вместе
-            if ($this->renderRowWithTwoPictures($children_data))
+            // Если строка целиком состоит из картинок — рендерим их одной строкой
+            if ($this->renderRowWithPictures($children_data))
             {
                 continue;
             }
@@ -856,9 +856,9 @@ class ParserCommandOriginal extends Command
     }
 
     /**
-     * Если строка состоит ровно из двух картинок, выводим их в одном ряду 2х6
+     * Если строка состоит только из картинок, выводим их в одном ряду
      */
-    public function renderRowWithTwoPictures ($row)
+    public function renderRowWithPictures ($row)
     {
         if (($row['block_type'] ?? '') != 'Row') return false;
 
@@ -867,23 +867,25 @@ class ParserCommandOriginal extends Command
 
         $pictures = $this->collectPicturesFromRowChildren($children);
 
-        // Применяем правило только если в строке действительно две картинки и других элементов нет
-        if (count($pictures) != 2 || count($pictures) != count($children)) return false;
+        // Применяем правило только если строка действительно содержит только картинки
+        if (count($pictures) < 1 || count($pictures) != count($children)) return false;
 
         $row_classes = $row['block_classes'] ?? [];
         if (!in_array('row', $row_classes)) $row_classes[] = 'row';
         $row_classes = array_values(array_filter(array_unique($row_classes)));
+
+        $colClass = $this->calculateImageColumnClass(count($pictures));
 
         $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $row_classes) . '">');
 
         foreach ($pictures as $picture)
         {
             $classes = $picture['classes'] ?? [];
-            // Сбрасываем текущие ширины, чтобы гарантировать col-md-6 для обеих картинок
+            // Сбрасываем ширины, чтобы задать одинаковый кол-ширина для всех картинок
             $classes = array_filter($classes, function ($class) {
                 return !preg_match('/^col(-[a-z]+)?-\\d+$/', $class);
             });
-            $classes[] = 'col-md-6';
+            $classes[] = $colClass;
             $classes = array_values(array_unique($classes));
 
             $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes) . '">');
@@ -905,6 +907,7 @@ class ParserCommandOriginal extends Command
 
         foreach ($children as $child)
         {
+            // Прямые картинки
             if (($child['block_type'] ?? '') == 'Picture' && !empty($child['images']))
             {
                 $pictures[] = [
@@ -917,22 +920,39 @@ class ParserCommandOriginal extends Command
 
             if (($child['block_type'] ?? '') == 'Col'
                 && !empty($child['children'])
-                && count($child['children']) == 1
             )
             {
-                $nested = $child['children'][0];
+                // Если колонка полностью состоит из картинок, добавляем их все
+                $colPictures = collect($child['children'])->filter(function ($el) {
+                    return ($el['block_type'] ?? '') == 'Picture' && !empty($el['images']);
+                })->values()->all();
 
-                if (($nested['block_type'] ?? '') == 'Picture' && !empty($nested['images']))
+                if (count($colPictures) == count($child['children']))
                 {
-                    $pictures[] = [
-                        'element' => $nested,
-                        'classes' => array_merge($child['block_classes'] ?? [], $nested['block_classes'] ?? []),
-                    ];
+                    foreach ($colPictures as $nested)
+                    {
+                        $pictures[] = [
+                            'element' => $nested,
+                            'classes' => array_merge($child['block_classes'] ?? [], $nested['block_classes'] ?? []),
+                        ];
+                    }
                 }
             }
         }
 
         return $pictures;
+    }
+
+    /**
+     * Подбираем одинаковую ширину колонок для картинок в одной строке
+     */
+    public function calculateImageColumnClass ($count)
+    {
+        if ($count <= 0) return 'col';
+
+        $columns = max(1, min(12, (int) floor(12 / $count)));
+
+        return 'col-md-' . $columns;
     }
 
     /**
