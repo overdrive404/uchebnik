@@ -1053,6 +1053,17 @@ class ParserCommandOriginal extends Command
             if (empty($element['images'])) return  false;
         }
 
+        // Подписи к фото всегда должны быть на всю ширину и по центру
+        if ($element['block_type'] === 'Caption')
+        {
+            $classes_child = array_values(array_filter($classes_child, function ($class) {
+                return !preg_match('/^col(-[a-z]+)?-\\d+$/', $class);
+            }));
+            $classes_child[] = 'col-12';
+            $classes_child[] = 'text-center';
+            $classes_child = array_values(array_unique($classes_child));
+        }
+
         if ($wrap && !empty($classes_parent))
         {
             $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes_parent) . '">');
