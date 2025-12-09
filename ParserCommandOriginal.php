@@ -615,7 +615,7 @@ class ParserCommandOriginal extends Command
         if ($this->visionChildIsFullWidth($parent['bbox'], $child['bbox']))
         {
             if ($parent['block_type'] == 'Row') $parent['block_classes'][] = 'justify-content-start';
-            if ($child['block_type'] == 'Col')  $child['block_classes'][] = 'col-md-12';
+            if ($child['block_type'] == 'Col')  $child['block_classes'][] = 'col-12';
         }
         else
         {
@@ -1433,7 +1433,7 @@ class ParserCommandOriginal extends Command
         $columns = (int) round(($percent / 100) * $columns_total);
         $columns = max(1, min($columns_total, $columns));
 
-        return 'col-md-' . $columns;
+        return 'col-' . $columns;
     }
 
     public function visionChildsIsFullWidth ($parent, $tolerance = 10)
