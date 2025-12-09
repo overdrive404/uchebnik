@@ -941,30 +941,30 @@ class ParserCommandOriginal extends Command
      */
     public function calcClassesSingleChild ($bbox_parent, $element, array &$classes_parent, array &$classes_child, $html = '')
     {
-        // Единственный элемент-колонка должен занимать всю ширину
+        // Чистим противоречащие классы, будем ставить заново по текущему bbox
+        $classes_parent = $this->stripJustifyContentClasses($classes_parent);
+        $classes_child = array_values(array_filter($classes_child, function ($class) {
+            return !preg_match('/^col(-[a-z]+)?-\\d+$/', $class);
+        }));
+
+        $isFullWidth = $this->visionChildIsFullWidth($bbox_parent, $element['bbox']);
+        $widthClass = $this->visionChildWidthClasses($bbox_parent, $element['bbox']);
+
+        // Единственный элемент-колонка: задаём ширину по bbox, а не всегда 12
         if ($element['block_type'] == 'Col')
         {
-            $classes_child = array_values(array_filter($classes_child, function ($class) {
-                return !preg_match('/^col(-[a-z]+)?-\\d+$/', $class);
-            }));
-            $classes_child[] = 'col-12';
+            $classes_child[] = $isFullWidth ? 'col-12' : $widthClass;
         }
         else
         {
-            // Для любых других элементов тоже задаём ширину по bbox, иначе они растягиваются на всю строку
-            $classes_child[] = $this->visionChildWidthClasses($bbox_parent, $element['bbox']);
+            $classes_child[] = $widthClass;
         }
 
-        // Ширина строки
-        if ($this->visionChildIsFullWidth($bbox_parent, $element['bbox']))
+        if ($isFullWidth)
         {
             $classes_parent[] = 'justify-content-start';
-            if ($element['block_type'] == 'Col') $classes_child[] = 'col-12';
-            return;
         }
-
-        // Определяем смещение центра относительно родителя
-        if ($this->visionChildIsLeftX($bbox_parent, $element['bbox']))
+        elseif ($this->visionChildIsLeftX($bbox_parent, $element['bbox']))
         {
             $classes_parent[] = 'justify-content-start';
         }
@@ -980,6 +980,16 @@ class ParserCommandOriginal extends Command
         // Убираем дубликаты
         $classes_parent = array_values(array_unique($classes_parent));
         $classes_child = array_values(array_unique($classes_child));
+    }
+
+    /**
+     * Убираем старые justify-content-* чтобы не смешивать взаимоисключающие выравнивания
+     */
+    protected function stripJustifyContentClasses (array $classes) : array
+    {
+        return array_values(array_filter($classes, function ($class) {
+            return !preg_match('/^justify-content-/', $class);
+        }));
     }
 
     /**
@@ -1405,7 +1415,11 @@ class ParserCommandOriginal extends Command
         $offset_left = abs($bbox_parent[self::BBOX_POSITION_LEFT] - $bbox_child[self::BBOX_POSITION_LEFT]);
         $offset_right = abs($bbox_parent[self::BBOX_POSITION_RIGHT] - $bbox_child[self::BBOX_POSITION_RIGHT]);
 
-        return abs($offset_left - $offset_right) <= $tolerance;
+        // Динамический допуск: учитываем ширину родителя, чтобы слегка «прощать» небольшую асимметрию
+        $parent_width = max(1, abs($bbox_parent[self::BBOX_POSITION_RIGHT] - $bbox_parent[self::BBOX_POSITION_LEFT]));
+        $dynamic_tolerance = max($tolerance, $parent_width * 0.08);
+
+        return abs($offset_left - $offset_right) <= $dynamic_tolerance;
     }
 
     public function visionChildIsLeftX ($bbox_parent, $bbox_child, $tolerance = 15)
@@ -1413,7 +1427,10 @@ class ParserCommandOriginal extends Command
         $parent_center = ($bbox_parent[self::BBOX_POSITION_LEFT] + $bbox_parent[self::BBOX_POSITION_RIGHT]) / 2;
         $child_center = ($bbox_child[self::BBOX_POSITION_LEFT] + $bbox_child[self::BBOX_POSITION_RIGHT]) / 2;
 
-        return $child_center < ($parent_center - $tolerance);
+        $parent_width = max(1, abs($bbox_parent[self::BBOX_POSITION_RIGHT] - $bbox_parent[self::BBOX_POSITION_LEFT]));
+        $dynamic_tolerance = max($tolerance, $parent_width * 0.08);
+
+        return $child_center < ($parent_center - $dynamic_tolerance);
     }
 
     public function visionChildIsRightX ($bbox_parent, $bbox_child, $tolerance = 15)
@@ -1421,7 +1438,10 @@ class ParserCommandOriginal extends Command
         $parent_center = ($bbox_parent[self::BBOX_POSITION_LEFT] + $bbox_parent[self::BBOX_POSITION_RIGHT]) / 2;
         $child_center = ($bbox_child[self::BBOX_POSITION_LEFT] + $bbox_child[self::BBOX_POSITION_RIGHT]) / 2;
 
-        return $child_center > ($parent_center + $tolerance);
+        $parent_width = max(1, abs($bbox_parent[self::BBOX_POSITION_RIGHT] - $bbox_parent[self::BBOX_POSITION_LEFT]));
+        $dynamic_tolerance = max($tolerance, $parent_width * 0.08);
+
+        return $child_center > ($parent_center + $dynamic_tolerance);
     }
 
     public function visionChildWidthClasses ($bbox_parent, $bbox_child, $columns_total = 12, $columns_used = 0)
