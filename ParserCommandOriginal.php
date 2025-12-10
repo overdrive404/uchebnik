@@ -837,6 +837,12 @@ class ParserCommandOriginal extends Command
                 continue;
             }
 
+            // Если строка целиком состоит из подписей, тоже выводим их единой строкой
+            if ($this->renderRowWithCaptions($children_data))
+            {
+                continue;
+            }
+
             $row_classes = $children_data['block_classes'] ?? [];
             foreach ($children_data['children'] as $col_data)
             {
@@ -899,6 +905,50 @@ class ParserCommandOriginal extends Command
     }
 
     /**
+     * Если строка состоит только из подписей, выводим их в одном ряду
+     */
+    public function renderRowWithCaptions ($row)
+    {
+        if (($row['block_type'] ?? '') != 'Row') return false;
+
+        $children = $row['children'] ?? [];
+        if (empty($children) || !is_array($children)) return false;
+
+        $captions = $this->collectCaptionsFromRowChildren($children);
+
+        // Применяем правило только если строка действительно содержит только подписи
+        if (empty($captions)) return false;
+
+        $row_classes = $row['block_classes'] ?? [];
+        if (!in_array('row', $row_classes)) $row_classes[] = 'row';
+        $row_classes = array_values(array_filter(array_unique($row_classes)));
+
+        $colClass = $this->calculateImageColumnClass(count($captions));
+
+        $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $row_classes) . '">');
+
+        foreach ($captions as $caption)
+        {
+            $classes = $caption['classes'] ?? [];
+            // Сбрасываем ширины, чтобы задать одинаковый кол-ширина для всех подписей
+            $classes = array_filter($classes, function ($class) {
+                return !preg_match('/^col(-[a-z]+)?-\\d+$/', $class);
+            });
+            $classes[] = $colClass;
+            $classes[] = 'text-center';
+            $classes = array_values(array_unique($classes));
+
+            $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes) . '">');
+            $this->structurePrepareElement($row['bbox'], $caption['element'], [], [], false);
+            $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
+        }
+
+        $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
+
+        return true;
+    }
+
+    /**
      * Собираем картинки из детей строки (учитываем вложенные колонки)
      */
     public function collectPicturesFromRowChildren ($children)
@@ -941,6 +991,56 @@ class ParserCommandOriginal extends Command
         }
 
         return $pictures;
+    }
+
+    /**
+     * Собираем подписи из детей строки (учитываем вложенные колонки)
+     */
+    public function collectCaptionsFromRowChildren ($children)
+    {
+        $captions = [];
+
+        foreach ($children as $child)
+        {
+            // Прямые подписи
+            if (($child['block_type'] ?? '') == 'Caption')
+            {
+                $captions[] = [
+                    'element' => $child,
+                    'classes' => $child['block_classes'] ?? [],
+                ];
+
+                continue;
+            }
+
+            if (($child['block_type'] ?? '') == 'Col'
+                && !empty($child['children'])
+            )
+            {
+                // Если колонка полностью состоит из подписей, добавляем их все
+                $colCaptions = collect($child['children'])->filter(function ($el) {
+                    return ($el['block_type'] ?? '') == 'Caption';
+                })->values()->all();
+
+                if (count($colCaptions) == count($child['children']))
+                {
+                    foreach ($colCaptions as $nested)
+                    {
+                        $captions[] = [
+                            'element' => $nested,
+                            'classes' => array_merge($child['block_classes'] ?? [], $nested['block_classes'] ?? []),
+                        ];
+                    }
+
+                    continue;
+                }
+            }
+
+            // Если встретили что-то отличное от подписи — не считаем строку подходящей
+            return [];
+        }
+
+        return $captions;
     }
 
     /**
