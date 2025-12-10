@@ -827,21 +827,49 @@ class ParserCommandOriginal extends Command
             return;
         }
 
+        $lastMediaRowMeta = null;
+
         foreach ($data['children'] as $children_data)
         {
             if (empty($children_data['children'])) continue; // строка без детей нам не нужна
 
             // Если строка целиком состоит из картинок — рендерим их одной строкой
-            if ($this->renderRowWithPictures($children_data))
+            if ($this->renderRowWithPictures($children_data, $colClassUsed, $mediaItemsCount))
             {
+                $lastMediaRowMeta = [
+                    'bbox' => $children_data['bbox'],
+                    'colClass' => $colClassUsed,
+                    'itemsCount' => $mediaItemsCount,
+                ];
+                continue;
+            }
+
+            // Если строка содержит только картинки и подписи — рендерим их одним пакетом
+            if ($this->renderRowWithPicturesAndCaptions($children_data, $colClassUsed))
+            {
+                $lastMediaRowMeta = null;
                 continue;
             }
 
             // Если строка целиком состоит из подписей, тоже выводим их единой строкой
             if ($this->renderRowWithCaptions($children_data))
             {
+                $lastMediaRowMeta = null;
                 continue;
             }
+
+            // Если сразу за строкой с картинками идёт компактная строка только с текстовыми подписями — тоже собираем их в один ряд
+            $captionTexts = $this->collectCaptionsFromRowChildren($children_data['children'], true);
+            if ($lastMediaRowMeta && $this->isLikelyCaptionFollowerRow($children_data, $captionTexts, $lastMediaRowMeta))
+            {
+                $mediaCount = $lastMediaRowMeta['itemsCount'] ?? 0;
+                $colClass = $this->calculateImageColumnClass(max($mediaCount, count($captionTexts)));
+                $this->renderCaptionRowFromElements($children_data, $captionTexts, $colClass);
+                $lastMediaRowMeta = null;
+                continue;
+            }
+
+            $lastMediaRowMeta = null;
 
             $row_classes = $children_data['block_classes'] ?? [];
             foreach ($children_data['children'] as $col_data)
@@ -864,7 +892,7 @@ class ParserCommandOriginal extends Command
     /**
      * Если строка состоит только из картинок, выводим их в одном ряду
      */
-    public function renderRowWithPictures ($row)
+    public function renderRowWithPictures ($row, &$colClassUsed = null, &$itemsCount = null)
     {
         if (($row['block_type'] ?? '') != 'Row') return false;
 
@@ -880,7 +908,9 @@ class ParserCommandOriginal extends Command
         if (!in_array('row', $row_classes)) $row_classes[] = 'row';
         $row_classes = array_values(array_filter(array_unique($row_classes)));
 
-        $colClass = $this->calculateImageColumnClass(count($pictures));
+        $itemsCount = count($pictures);
+        $colClass = $this->calculateImageColumnClass($itemsCount);
+        $colClassUsed = $colClass;
 
         $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $row_classes) . '">');
 
@@ -949,6 +979,59 @@ class ParserCommandOriginal extends Command
     }
 
     /**
+     * Если строка содержит только картинки и подписи — сперва рендерим картинки, затем подписи
+     */
+    public function renderRowWithPicturesAndCaptions ($row, &$colClassUsed = null)
+    {
+        if (($row['block_type'] ?? '') != 'Row') return false;
+
+        $children = $row['children'] ?? [];
+        if (empty($children) || !is_array($children)) return false;
+
+        $pictures = $this->collectPicturesFromRowChildren($children);
+        $captions = $this->collectCaptionsFromRowChildren($children, false, false);
+
+        $isMediaOnly = $this->isRowConsistsOfPicturesAndCaptions($children);
+
+        if (!$isMediaOnly || (empty($pictures) && empty($captions))) {
+            return false;
+        }
+
+        $row_classes = $row['block_classes'] ?? [];
+        if (!in_array('row', $row_classes)) $row_classes[] = 'row';
+        $row_classes = array_values(array_filter(array_unique($row_classes)));
+
+        $elementsCountForWidth = max(count($pictures), count($captions));
+        $colClass = $this->calculateImageColumnClass($elementsCountForWidth);
+        $colClassUsed = $colClass;
+
+        if (!empty($pictures)) {
+            $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $row_classes) . '">');
+
+            foreach ($pictures as $picture) {
+                $classes = $picture['classes'] ?? [];
+                $classes = array_filter($classes, function ($class) {
+                    return !preg_match('/^col(-[a-z]+)?-\\d+$/', $class);
+                });
+                $classes[] = $colClass;
+                $classes = array_values(array_unique($classes));
+
+                $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes) . '">');
+                $this->structurePrepareElement($row['bbox'], $picture['element'], [], [], false);
+                $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
+            }
+
+            $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
+        }
+
+        if (!empty($captions)) {
+            $this->renderCaptionRowFromElements($row, $captions, $colClass, $row_classes);
+        }
+
+        return true;
+    }
+
+    /**
      * Собираем картинки из детей строки (учитываем вложенные колонки)
      */
     public function collectPicturesFromRowChildren ($children)
@@ -996,14 +1079,14 @@ class ParserCommandOriginal extends Command
     /**
      * Собираем подписи из детей строки (учитываем вложенные колонки)
      */
-    public function collectCaptionsFromRowChildren ($children)
+    public function collectCaptionsFromRowChildren ($children, $allowTextAsCaption = false, $strict = true)
     {
         $captions = [];
 
         foreach ($children as $child)
         {
             // Прямые подписи
-            if (($child['block_type'] ?? '') == 'Caption')
+            if (($child['block_type'] ?? '') == 'Caption' || ($allowTextAsCaption && ($child['block_type'] ?? '') == 'Text'))
             {
                 $captions[] = [
                     'element' => $child,
@@ -1018,8 +1101,8 @@ class ParserCommandOriginal extends Command
             )
             {
                 // Если колонка полностью состоит из подписей, добавляем их все
-                $colCaptions = collect($child['children'])->filter(function ($el) {
-                    return ($el['block_type'] ?? '') == 'Caption';
+                $colCaptions = collect($child['children'])->filter(function ($el) use ($allowTextAsCaption) {
+                    return ($el['block_type'] ?? '') == 'Caption' || ($allowTextAsCaption && ($el['block_type'] ?? '') == 'Text');
                 })->values()->all();
 
                 if (count($colCaptions) == count($child['children']))
@@ -1036,11 +1119,105 @@ class ParserCommandOriginal extends Command
                 }
             }
 
+            if (!$strict) {
+                continue;
+            }
+
             // Если встретили что-то отличное от подписи — не считаем строку подходящей
             return [];
         }
 
         return $captions;
+    }
+
+    /**
+     * В строке нет ничего, кроме картинок/подписей/колонок с ними
+     */
+    public function isRowConsistsOfPicturesAndCaptions ($children)
+    {
+        foreach ($children as $child) {
+            $type = $child['block_type'] ?? '';
+
+            if (in_array($type, ['Picture', 'Caption'])) {
+                continue;
+            }
+
+            if ($type === 'Col' && !empty($child['children'])) {
+                if ($this->isRowConsistsOfPicturesAndCaptions($child['children'])) {
+                    continue;
+                }
+
+                return false;
+            }
+
+            if ($type === 'PictureGroup') {
+                if (empty($child['children'])) {
+                    continue;
+                }
+
+                if ($this->isRowConsistsOfPicturesAndCaptions($child['children'])) {
+                    continue;
+                }
+
+                return false;
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Рендер ряда подписей из готового списка элементов
+     */
+    public function renderCaptionRowFromElements ($row, $captions, $colClass, $rowClasses = [])
+    {
+        if (empty($captions)) return;
+
+        $row_classes = $rowClasses ?: ($row['block_classes'] ?? []);
+        $row_classes = array_filter($row_classes, function ($class) {
+            return !preg_match('/^justify-content-/', $class);
+        });
+        if (!in_array('row', $row_classes)) $row_classes[] = 'row';
+        $row_classes[] = 'justify-content-around';
+        $row_classes = array_values(array_unique($row_classes));
+
+        $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $row_classes) . '">');
+
+        foreach ($captions as $caption)
+        {
+            $classes = $caption['classes'] ?? [];
+            $classes = array_filter($classes, function ($class) {
+                return !preg_match('/^col(-[a-z]+)?-\\d+$/', $class);
+            });
+            $classes[] = $colClass;
+            $classes[] = 'text-center';
+            $classes = array_values(array_unique($classes));
+
+            $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes) . '">');
+            $this->structurePrepareElement($row['bbox'], $caption['element'], [], [], false);
+            $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
+        }
+
+        $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
+    }
+
+    /**
+     * Проверяем, что после строки с картинками идёт компактная строка, похожая на подписи
+     */
+    public function isLikelyCaptionFollowerRow ($row, $captions, $lastMediaRowMeta)
+    {
+        if (empty($captions)) return false;
+        if (empty($lastMediaRowMeta['bbox'])) return false;
+
+        $rowHeight = ($row['bbox'][self::BBOX_POSITION_BOTTOM] ?? 0) - ($row['bbox'][self::BBOX_POSITION_TOP] ?? 0);
+        $verticalGap = ($row['bbox'][self::BBOX_POSITION_TOP] ?? 0) - ($lastMediaRowMeta['bbox'][self::BBOX_POSITION_BOTTOM] ?? 0);
+
+        if ($rowHeight > 80) return false;
+        if ($verticalGap < -20 || $verticalGap > 80) return false;
+
+        return true;
     }
 
     /**
@@ -1259,6 +1436,7 @@ class ParserCommandOriginal extends Command
             if (empty($element['images'])) return  false;
         }
 
+
         // Подписи к фото всегда должны быть на всю ширину и по центру
         if ($element['block_type'] === 'Caption')
         {
@@ -1269,6 +1447,7 @@ class ParserCommandOriginal extends Command
             $classes_child[] = 'text-center';
             $classes_child = array_values(array_unique($classes_child));
         }
+
 
         if ($wrap && !empty($classes_parent))
         {
