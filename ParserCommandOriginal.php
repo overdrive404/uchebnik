@@ -1324,6 +1324,9 @@ class ParserCommandOriginal extends Command
      */
     public function calcClassesSingleChild ($bbox_parent, $element, array &$classes_parent, array &$classes_child, $html = '')
     {
+        $isTextLike = in_array($element['block_type'], ['SectionHeader', 'Text']);
+        $isCenteredByBbox = $this->visionChildIsCenterX($bbox_parent, $element['bbox']);
+
         // Единственный элемент-колонка должен занимать всю ширину
         if ($element['block_type'] == 'Col')
         {
@@ -1341,23 +1344,30 @@ class ParserCommandOriginal extends Command
         // Ширина строки
         if ($this->visionChildIsFullWidth($bbox_parent, $element['bbox']))
         {
-            $classes_parent[] = 'justify-content-start';
+            $this->setJustifyContentClass($classes_parent, 'justify-content-start');
             if ($element['block_type'] == 'Col') $classes_child[] = 'col-12';
+            $classes_parent = array_values(array_unique($classes_parent));
+            $classes_child = array_values(array_unique($classes_child));
             return;
         }
 
         // Определяем смещение центра относительно родителя
         if ($this->visionChildIsLeftX($bbox_parent, $element['bbox']))
         {
-            $classes_parent[] = 'justify-content-start';
+            $this->setJustifyContentClass($classes_parent, 'justify-content-start');
         }
         elseif ($this->visionChildIsRightX($bbox_parent, $element['bbox']))
         {
-            $classes_parent[] = 'justify-content-end';
+            $this->setJustifyContentClass($classes_parent, 'justify-content-end');
         }
-        elseif ($this->visionChildIsCenterX($bbox_parent, $element['bbox']))
+        elseif ($isCenteredByBbox)
         {
-            $classes_parent[] = 'justify-content-center';
+            $this->setJustifyContentClass($classes_parent, 'justify-content-center');
+        }
+
+        if ($isCenteredByBbox && $isTextLike)
+        {
+            $classes_child[] = 'text-center';
         }
 
         // Убираем дубликаты
@@ -1816,8 +1826,9 @@ class ParserCommandOriginal extends Command
 
     public function visionChildIsCenterX ($bbox_parent, $bbox_child, $tolerance = 15)
     {
-        $offset_left = abs($bbox_parent[self::BBOX_POSITION_LEFT] - $bbox_child[self::BBOX_POSITION_LEFT]);
-        $offset_right = abs($bbox_parent[self::BBOX_POSITION_RIGHT] - $bbox_child[self::BBOX_POSITION_RIGHT]);
+        // Сравниваем остаток свободного пространства слева и справа с учетом допуска
+        $offset_left = max(0, $bbox_child[self::BBOX_POSITION_LEFT] - $bbox_parent[self::BBOX_POSITION_LEFT]);
+        $offset_right = max(0, $bbox_parent[self::BBOX_POSITION_RIGHT] - $bbox_child[self::BBOX_POSITION_RIGHT]);
 
         return abs($offset_left - $offset_right) <= $tolerance;
     }
@@ -1836,6 +1847,18 @@ class ParserCommandOriginal extends Command
         $child_center = ($bbox_child[self::BBOX_POSITION_LEFT] + $bbox_child[self::BBOX_POSITION_RIGHT]) / 2;
 
         return $child_center > ($parent_center + $tolerance);
+    }
+
+    /**
+     * Меняем существующее горизонтальное выравнивание flex-контейнера на новое
+     */
+    protected function setJustifyContentClass (array &$classes, $class)
+    {
+        $classes = array_values(array_filter($classes, function ($existing) {
+            return !preg_match('/^justify-content-/', $existing);
+        }));
+
+        $classes[] = $class;
     }
 
     public function visionChildWidthClasses ($bbox_parent, $bbox_child, $columns_total = 12, $columns_used = 0)
