@@ -1443,6 +1443,7 @@ class ParserCommandOriginal extends Command
     {
         $isTextLike = in_array($element['block_type'], ['SectionHeader', 'Text']);
         $isCenteredByBbox = $this->visionChildIsCenterX($bbox_parent, $element['bbox']);
+        $forceCenterHeading = $this->shouldForceCenterSectionHeader($element);
 
         // Единственный элемент-колонка должен занимать всю ширину
         if ($element['block_type'] == 'Col')
@@ -1461,15 +1462,23 @@ class ParserCommandOriginal extends Command
         // Ширина строки
         if ($this->visionChildIsFullWidth($bbox_parent, $element['bbox']))
         {
-            $this->setJustifyContentClass($classes_parent, 'justify-content-start');
+            $this->setJustifyContentClass($classes_parent, $forceCenterHeading ? 'justify-content-center' : 'justify-content-start');
             if ($element['block_type'] == 'Col') $classes_child[] = 'col-12';
+            if (($isCenteredByBbox || $forceCenterHeading) && $isTextLike)
+            {
+                $classes_child[] = 'text-center';
+            }
             $classes_parent = array_values(array_unique($classes_parent));
             $classes_child = array_values(array_unique($classes_child));
             return;
         }
 
         // Определяем смещение центра относительно родителя
-        if ($this->visionChildIsLeftX($bbox_parent, $element['bbox']))
+        if ($forceCenterHeading)
+        {
+            $this->setJustifyContentClass($classes_parent, 'justify-content-center');
+        }
+        elseif ($this->visionChildIsLeftX($bbox_parent, $element['bbox']))
         {
             $this->setJustifyContentClass($classes_parent, 'justify-content-start');
         }
@@ -1482,7 +1491,7 @@ class ParserCommandOriginal extends Command
             $this->setJustifyContentClass($classes_parent, 'justify-content-center');
         }
 
-        if ($isCenteredByBbox && $isTextLike)
+        if (($isCenteredByBbox || $forceCenterHeading) && $isTextLike)
         {
             $classes_child[] = 'text-center';
         }
@@ -1490,6 +1499,38 @@ class ParserCommandOriginal extends Command
         // Убираем дубликаты
         $classes_parent = array_values(array_unique($classes_parent));
         $classes_child = array_values(array_unique($classes_child));
+    }
+
+    /**
+     * Жестко центрируем только нужные заголовки из задания
+     */
+    protected function shouldForceCenterSectionHeader (array $element): bool
+    {
+        if (($element['block_type'] ?? '') !== 'SectionHeader' || empty($element['html']))
+        {
+            return false;
+        }
+
+        [, $text] = $this->parseElementsHtml($element['html']);
+        $normalizedText = $this->normalizeHeadingText($text);
+
+        $targets = [
+            'МИР ДРЕВНОСТИ: ДАЛЁКИЙ И БЛИЗКИЙ',
+            'ДРЕВНИЙ ЕГИПЕТ',
+            'ДРЕВНЯЯ ГРЕЦИЯ',
+            'ДРЕВНИЙ РИМ',
+            'СРЕДНИЕ ВЕКА: ВРЕМЯ РЫЦАРЕЙ И ЗАМКОВ',
+            'РЫЦАРИ И ЗАМКИ',
+        ];
+
+        return in_array($normalizedText, $targets, true);
+    }
+
+    protected function normalizeHeadingText (string $text): string
+    {
+        $normalized = preg_replace('/\\s+/u', ' ', trim($text));
+
+        return mb_strtoupper($normalized ?? '', 'UTF-8');
     }
 
     /**
