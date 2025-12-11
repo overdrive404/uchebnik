@@ -833,6 +833,12 @@ class ParserCommandOriginal extends Command
         {
             if (empty($children_data['children'])) continue; // строка без детей нам не нужна
 
+            // Если в строке есть и картинки, и текст ниже, сначала рендерим общий ряд картинок, потом остальное
+            if ($this->renderRowWithSeparatedMedia($children_data, $lastMediaRowMeta))
+            {
+                continue;
+            }
+
             // Если строка целиком состоит из картинок — рендерим их одной строкой
             if ($this->renderRowWithPictures($children_data, $colClassUsed, $mediaItemsCount))
             {
@@ -887,6 +893,97 @@ class ParserCommandOriginal extends Command
                 }
             }
         }
+    }
+
+    /**
+     * Если в строке есть картинки и другой контент ниже, сначала выводим картинки единым рядом
+     */
+    public function renderRowWithSeparatedMedia ($row, &$lastMediaRowMeta = null)
+    {
+        if (($row['block_type'] ?? '') != 'Row') return false;
+
+        $children = $row['children'] ?? [];
+        if (empty($children) || !is_array($children)) return false;
+
+        $pictures = $this->collectPicturesFromRowChildren($children);
+        if (empty($pictures)) return false;
+
+        $mediaChildren = [];
+        $otherChildren = [];
+
+        foreach ($children as $child)
+        {
+            if ($this->isMediaElement($child)) {
+                $mediaChildren[] = $child;
+            } else {
+                $otherChildren[] = $child;
+            }
+        }
+
+        // Нечего разделять
+        if (empty($mediaChildren) || empty($otherChildren)) return false;
+
+        // Определяем нижнюю границу картинок и верхнюю границу остальных элементов
+        $picturesBottom = null;
+        foreach ($pictures as $picture) {
+            $bbox = $picture['element']['bbox'] ?? null;
+            if (!is_array($bbox) || !isset($bbox[self::BBOX_POSITION_BOTTOM])) {
+                continue;
+            }
+
+            $bottom = $bbox[self::BBOX_POSITION_BOTTOM];
+            $picturesBottom = $picturesBottom === null ? $bottom : max($picturesBottom, $bottom);
+        }
+
+        if ($picturesBottom === null) return false;
+
+        $otherTop = null;
+        foreach ($otherChildren as $child) {
+            if (!isset($child['bbox'][self::BBOX_POSITION_TOP])) {
+                continue;
+            }
+
+            $top = $child['bbox'][self::BBOX_POSITION_TOP];
+            $otherTop = $otherTop === null ? $top : min($otherTop, $top);
+        }
+
+        if ($otherTop === null) return false;
+
+        // Если элементы слишком близко, не делим строку
+        if (($otherTop - $picturesBottom) < 10) return false;
+
+        $mediaRow = $row;
+        $mediaRow['children'] = array_values($mediaChildren);
+        $mediaRow['bbox'] = $this->calcBboxesArea($mediaChildren);
+
+        $colClassUsed = null;
+        $mediaItemsCount = count($pictures);
+        $mediaRendered = false;
+
+        if ($this->renderRowWithPicturesAndCaptions($mediaRow, $colClassUsed))
+        {
+            $mediaRendered = true;
+            $lastMediaRowMeta = null;
+        }
+        elseif ($this->renderRowWithPictures($mediaRow, $colClassUsed, $mediaItemsCount))
+        {
+            $mediaRendered = true;
+            $lastMediaRowMeta = [
+                'bbox' => $mediaRow['bbox'],
+                'colClass' => $colClassUsed,
+                'itemsCount' => $mediaItemsCount,
+            ];
+        }
+
+        if (!$mediaRendered) return false;
+
+        // Отрисовываем остальную часть строки стандартным способом
+        if (!empty($otherChildren)) {
+            $row_classes = $row['block_classes'] ?? [];
+            $this->parseElements($row['bbox'], array_values($otherChildren), $row_classes, []);
+        }
+
+        return true;
     }
 
     /**
@@ -1128,6 +1225,26 @@ class ParserCommandOriginal extends Command
         }
 
         return $captions;
+    }
+
+    /**
+     * Проверяем, относится ли элемент к медиа (картинки/подписи/их контейнеры)
+     */
+    protected function isMediaElement ($child)
+    {
+        $type = $child['block_type'] ?? '';
+
+        if (in_array($type, ['Picture', 'Caption', 'PictureGroup'])) {
+            return true;
+        }
+
+        if ($type === 'Col' && !empty($child['children'])) {
+            return collect($child['children'])->every(function ($el) {
+                return $this->isMediaElement($el);
+            });
+        }
+
+        return false;
     }
 
     /**
