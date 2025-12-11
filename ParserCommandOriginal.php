@@ -833,12 +833,6 @@ class ParserCommandOriginal extends Command
         {
             if (empty($children_data['children'])) continue; // строка без детей нам не нужна
 
-            // Если в строке есть и картинки, и текст ниже, сначала рендерим общий ряд картинок, потом остальное
-            if ($this->renderRowWithSeparatedMedia($children_data, $lastMediaRowMeta))
-            {
-                continue;
-            }
-
             // Если строка целиком состоит из картинок — рендерим их одной строкой
             if ($this->renderRowWithPictures($children_data, $colClassUsed, $mediaItemsCount))
             {
@@ -893,97 +887,6 @@ class ParserCommandOriginal extends Command
                 }
             }
         }
-    }
-
-    /**
-     * Если в строке есть картинки и другой контент ниже, сначала выводим картинки единым рядом
-     */
-    public function renderRowWithSeparatedMedia ($row, &$lastMediaRowMeta = null)
-    {
-        if (($row['block_type'] ?? '') != 'Row') return false;
-
-        $children = $row['children'] ?? [];
-        if (empty($children) || !is_array($children)) return false;
-
-        $pictures = $this->collectPicturesFromRowChildren($children);
-        if (empty($pictures)) return false;
-
-        $mediaChildren = [];
-        $otherChildren = [];
-
-        foreach ($children as $child)
-        {
-            if ($this->isMediaElement($child)) {
-                $mediaChildren[] = $child;
-            } else {
-                $otherChildren[] = $child;
-            }
-        }
-
-        // Нечего разделять
-        if (empty($mediaChildren) || empty($otherChildren)) return false;
-
-        // Определяем нижнюю границу картинок и верхнюю границу остальных элементов
-        $picturesBottom = null;
-        foreach ($pictures as $picture) {
-            $bbox = $picture['element']['bbox'] ?? null;
-            if (!is_array($bbox) || !isset($bbox[self::BBOX_POSITION_BOTTOM])) {
-                continue;
-            }
-
-            $bottom = $bbox[self::BBOX_POSITION_BOTTOM];
-            $picturesBottom = $picturesBottom === null ? $bottom : max($picturesBottom, $bottom);
-        }
-
-        if ($picturesBottom === null) return false;
-
-        $otherTop = null;
-        foreach ($otherChildren as $child) {
-            if (!isset($child['bbox'][self::BBOX_POSITION_TOP])) {
-                continue;
-            }
-
-            $top = $child['bbox'][self::BBOX_POSITION_TOP];
-            $otherTop = $otherTop === null ? $top : min($otherTop, $top);
-        }
-
-        if ($otherTop === null) return false;
-
-        // Если элементы слишком близко, не делим строку
-        if (($otherTop - $picturesBottom) < 10) return false;
-
-        $mediaRow = $row;
-        $mediaRow['children'] = array_values($mediaChildren);
-        $mediaRow['bbox'] = $this->calcBboxesArea($mediaChildren);
-
-        $colClassUsed = null;
-        $mediaItemsCount = count($pictures);
-        $mediaRendered = false;
-
-        if ($this->renderRowWithPicturesAndCaptions($mediaRow, $colClassUsed))
-        {
-            $mediaRendered = true;
-            $lastMediaRowMeta = null;
-        }
-        elseif ($this->renderRowWithPictures($mediaRow, $colClassUsed, $mediaItemsCount))
-        {
-            $mediaRendered = true;
-            $lastMediaRowMeta = [
-                'bbox' => $mediaRow['bbox'],
-                'colClass' => $colClassUsed,
-                'itemsCount' => $mediaItemsCount,
-            ];
-        }
-
-        if (!$mediaRendered) return false;
-
-        // Отрисовываем остальную часть строки стандартным способом
-        if (!empty($otherChildren)) {
-            $row_classes = $row['block_classes'] ?? [];
-            $this->parseElements($row['bbox'], array_values($otherChildren), $row_classes, []);
-        }
-
-        return true;
     }
 
     /**
@@ -1228,26 +1131,6 @@ class ParserCommandOriginal extends Command
     }
 
     /**
-     * Проверяем, относится ли элемент к медиа (картинки/подписи/их контейнеры)
-     */
-    protected function isMediaElement ($child)
-    {
-        $type = $child['block_type'] ?? '';
-
-        if (in_array($type, ['Picture', 'Caption', 'PictureGroup'])) {
-            return true;
-        }
-
-        if ($type === 'Col' && !empty($child['children'])) {
-            return collect($child['children'])->every(function ($el) {
-                return $this->isMediaElement($el);
-            });
-        }
-
-        return false;
-    }
-
-    /**
      * В строке нет ничего, кроме картинок/подписей/колонок с ними
      */
     public function isRowConsistsOfPicturesAndCaptions ($children)
@@ -1363,6 +1246,9 @@ class ParserCommandOriginal extends Command
             return;
         }
 
+        // Собираем Table и прилегающие к ним TableCell обратно в единую структуру
+        $elements = $this->mergeTablesWithCells($elements);
+
         // Если перед нами сразу набор пунктов списка, рисуем их единым списком без div-оберток
         $isPureList = collect($elements)->every(function ($el) {
             return ($el['block_type'] ?? '') === 'ListItem';
@@ -1437,13 +1323,118 @@ class ParserCommandOriginal extends Command
     }
 
     /**
+     * Объединяем Table с соответствующими TableCell, чтобы корректно построить HTML таблицу
+     */
+    protected function mergeTablesWithCells (array $elements) : array
+    {
+        $tables = [];
+        $cells = [];
+        $other = [];
+
+        foreach ($elements as $element)
+        {
+            $type = $element['block_type'] ?? '';
+
+            if ($type === 'Table')
+            {
+                $tables[] = $element;
+            }
+            elseif ($type === 'TableCell')
+            {
+                $cells[] = $element;
+            }
+            else
+            {
+                $other[] = $element;
+            }
+        }
+
+        if (empty($tables) || empty($cells))
+        {
+            return $elements;
+        }
+
+        foreach ($tables as &$table)
+        {
+            if (!isset($table['children']) || !is_array($table['children']))
+            {
+                $table['children'] = [];
+            }
+        }
+        unset($table);
+
+        foreach ($cells as $cell)
+        {
+            $tableIndex = $this->findTableIndexForCell($tables, $cell);
+
+            if ($tableIndex === null)
+            {
+                $other[] = $cell;
+                continue;
+            }
+
+            $alreadyAttached = false;
+            foreach ($tables[$tableIndex]['children'] as $attached)
+            {
+                if (($attached['id'] ?? null) === ($cell['id'] ?? null))
+                {
+                    $alreadyAttached = true;
+                    break;
+                }
+            }
+
+            if (!$alreadyAttached)
+            {
+                $tables[$tableIndex]['children'][] = $cell;
+            }
+        }
+
+        $merged = array_merge($tables, $other);
+        $this->bboxesSortByPositionsTopLeft($merged);
+
+        return $merged;
+    }
+
+    /**
+     * Ищем таблицу, в пределах которой располагается ячейка
+     */
+    protected function findTableIndexForCell (array $tables, array $cell) : ?int
+    {
+        foreach ($tables as $index => $table)
+        {
+            if ($this->isBboxInside($cell['bbox'] ?? [], $table['bbox'] ?? []))
+            {
+                return $index;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Проверяем, что один bbox полностью находится внутри другого (с небольшим допуском)
+     */
+    protected function isBboxInside (array $inner, array $outer, $tolerance = 2) : bool
+    {
+        if (count($inner) < 4 || count($outer) < 4)
+        {
+            return false;
+        }
+
+        return $inner[self::BBOX_POSITION_LEFT] >= ($outer[self::BBOX_POSITION_LEFT] - $tolerance)
+            && $inner[self::BBOX_POSITION_RIGHT] <= ($outer[self::BBOX_POSITION_RIGHT] + $tolerance)
+            && $inner[self::BBOX_POSITION_TOP] >= ($outer[self::BBOX_POSITION_TOP] - $tolerance)
+            && $inner[self::BBOX_POSITION_BOTTOM] <= ($outer[self::BBOX_POSITION_BOTTOM] + $tolerance);
+    }
+
+    /**
      * Простейший расчет классов и выравниваний на основе позиции элемента
      */
     public function calcClassesSingleChild ($bbox_parent, $element, array &$classes_parent, array &$classes_child, $html = '')
     {
         $isTextLike = in_array($element['block_type'], ['SectionHeader', 'Text']);
         $isCenteredByBbox = $this->visionChildIsCenterX($bbox_parent, $element['bbox']);
-        $forceCenterHeading = $this->shouldForceCenterSectionHeader($element);
+        $hasJustify = $this->hasJustifyContent($classes_parent);
 
         // Единственный элемент-колонка должен занимать всю ширину
         if ($element['block_type'] == 'Col')
@@ -1455,6 +1446,10 @@ class ParserCommandOriginal extends Command
         }
         else
         {
+            // Чистим ранее рассчитанные ширины перед добавлением новой
+            $classes_child = array_values(array_filter($classes_child, function ($class) {
+                return !preg_match('/^col(-[a-z]+)?-\\d+$/', $class);
+            }));
             // Для любых других элементов тоже задаём ширину по bbox, иначе они растягиваются на всю строку
             $classes_child[] = $this->visionChildWidthClasses($bbox_parent, $element['bbox']);
         }
@@ -1462,36 +1457,34 @@ class ParserCommandOriginal extends Command
         // Ширина строки
         if ($this->visionChildIsFullWidth($bbox_parent, $element['bbox']))
         {
-            $this->setJustifyContentClass($classes_parent, $forceCenterHeading ? 'justify-content-center' : 'justify-content-start');
-            if ($element['block_type'] == 'Col') $classes_child[] = 'col-12';
-            if (($isCenteredByBbox || $forceCenterHeading) && $isTextLike)
+            if (!$hasJustify)
             {
-                $classes_child[] = 'text-center';
+                $this->setJustifyContentClass($classes_parent, 'justify-content-start');
             }
+            if ($element['block_type'] == 'Col') $classes_child[] = 'col-12';
             $classes_parent = array_values(array_unique($classes_parent));
             $classes_child = array_values(array_unique($classes_child));
             return;
         }
 
         // Определяем смещение центра относительно родителя
-        if ($forceCenterHeading)
+        if (!$hasJustify)
         {
-            $this->setJustifyContentClass($classes_parent, 'justify-content-center');
-        }
-        elseif ($this->visionChildIsLeftX($bbox_parent, $element['bbox']))
-        {
-            $this->setJustifyContentClass($classes_parent, 'justify-content-start');
-        }
-        elseif ($this->visionChildIsRightX($bbox_parent, $element['bbox']))
-        {
-            $this->setJustifyContentClass($classes_parent, 'justify-content-end');
-        }
-        elseif ($isCenteredByBbox)
-        {
-            $this->setJustifyContentClass($classes_parent, 'justify-content-center');
+            if ($this->visionChildIsLeftX($bbox_parent, $element['bbox']))
+            {
+                $this->setJustifyContentClass($classes_parent, 'justify-content-start');
+            }
+            elseif ($this->visionChildIsRightX($bbox_parent, $element['bbox']))
+            {
+                $this->setJustifyContentClass($classes_parent, 'justify-content-end');
+            }
+            elseif ($isCenteredByBbox)
+            {
+                $this->setJustifyContentClass($classes_parent, 'justify-content-center');
+            }
         }
 
-        if (($isCenteredByBbox || $forceCenterHeading) && $isTextLike)
+        if ($isCenteredByBbox && $isTextLike && ($this->hasJustifyCenter($classes_parent) || !$hasJustify))
         {
             $classes_child[] = 'text-center';
         }
@@ -1499,38 +1492,6 @@ class ParserCommandOriginal extends Command
         // Убираем дубликаты
         $classes_parent = array_values(array_unique($classes_parent));
         $classes_child = array_values(array_unique($classes_child));
-    }
-
-    /**
-     * Жестко центрируем только нужные заголовки из задания
-     */
-    protected function shouldForceCenterSectionHeader (array $element): bool
-    {
-        if (($element['block_type'] ?? '') !== 'SectionHeader' || empty($element['html']))
-        {
-            return false;
-        }
-
-        [, $text] = $this->parseElementsHtml($element['html']);
-        $normalizedText = $this->normalizeHeadingText($text);
-
-        $targets = [
-            'МИР ДРЕВНОСТИ: ДАЛЁКИЙ И БЛИЗКИЙ',
-            'ДРЕВНИЙ ЕГИПЕТ',
-            'ДРЕВНЯЯ ГРЕЦИЯ',
-            'ДРЕВНИЙ РИМ',
-            'СРЕДНИЕ ВЕКА: ВРЕМЯ РЫЦАРЕЙ И ЗАМКОВ',
-            'РЫЦАРИ И ЗАМКИ',
-        ];
-
-        return in_array($normalizedText, $targets, true);
-    }
-
-    protected function normalizeHeadingText (string $text): string
-    {
-        $normalized = preg_replace('/\\s+/u', ' ', trim($text));
-
-        return mb_strtoupper($normalized ?? '', 'UTF-8');
     }
 
     /**
@@ -1752,7 +1713,14 @@ class ParserCommandOriginal extends Command
 
         elseif ($element['block_type'] == 'Table')
         {
-            if (empty($element['children'])) return false;
+            if (empty($element['children']))
+            {
+                if (isset($element['html']) && strlen(trim($element['html'])))
+                {
+                    $this->structureAppend(self::CONTENT_TYPE_HTML, $element['html']);
+                }
+                return false;
+            }
 
             $this->structureAppend(self::CONTENT_TYPE_HTML, '<table>');
             $this->structureAppend(self::CONTENT_TYPE_HTML, '<tbody>');
@@ -1765,10 +1733,11 @@ class ParserCommandOriginal extends Command
 
                 foreach ($table_row as $cell)
                 {
-                    [$cell_tag, $cell_text] = $this->parseElementsHtml($cell['html']);
+                    [$cell_tag, $cell_text, $cell_attributes] = $this->parseTableCellHtml($cell['html']);
                     $cell_tag = in_array(strtolower($cell_tag), ['td', 'th']) ? strtolower($cell_tag) : 'td';
+                    $attributes_string = $this->stringifyHtmlAttributes($cell_attributes);
 
-                    $this->structureAppend(self::CONTENT_TYPE_HTML, '<' . $cell_tag . '>');
+                    $this->structureAppend(self::CONTENT_TYPE_HTML, '<' . $cell_tag . $attributes_string . '>');
                     if (strlen(trim($cell_text)))
                     {
                         $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $cell_text . '</span>');
@@ -1785,10 +1754,11 @@ class ParserCommandOriginal extends Command
 
         elseif ($element['block_type'] == 'TableCell')
         {
-            [$cell_tag, $cell_text] = $this->parseElementsHtml($element['html']);
+            [$cell_tag, $cell_text, $cell_attributes] = $this->parseTableCellHtml($element['html']);
             $cell_tag = in_array(strtolower($cell_tag), ['td', 'th']) ? strtolower($cell_tag) : 'td';
+            $attributes_string = $this->stringifyHtmlAttributes($cell_attributes);
 
-            $this->structureAppend(self::CONTENT_TYPE_HTML, '<' . $cell_tag . '>');
+            $this->structureAppend(self::CONTENT_TYPE_HTML, '<' . $cell_tag . $attributes_string . '>');
             if (strlen(trim($cell_text)))
             {
                 $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $cell_text . '</span>');
@@ -2019,6 +1989,38 @@ class ParserCommandOriginal extends Command
         $classes[] = $class;
     }
 
+    /**
+     * Проверяем, задано ли выравнивание flex-контейнера
+     */
+    protected function hasJustifyContent (array $classes) : bool
+    {
+        foreach ($classes as $class)
+        {
+            if (preg_match('/^justify-content-/', $class))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Проверяем, что выравнивание flex-контейнера по центру
+     */
+    protected function hasJustifyCenter (array $classes) : bool
+    {
+        foreach ($classes as $class)
+        {
+            if (preg_match('/^justify-content-center$/', $class))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function visionChildWidthClasses ($bbox_parent, $bbox_child, $columns_total = 12, $columns_used = 0)
     {
         $parent_width = max(1, abs($bbox_parent[self::BBOX_POSITION_RIGHT] - $bbox_parent[self::BBOX_POSITION_LEFT]));
@@ -2098,6 +2100,62 @@ class ParserCommandOriginal extends Command
         $html = preg_replace('/\\s?block-type=\"[^\"]*\"/i', '', $html);
 
         return $html;
+    }
+
+    /**
+     * Превращаем массив атрибутов в строку для вставки в HTML
+     */
+    protected function stringifyHtmlAttributes (array $attributes) : string
+    {
+        if (empty($attributes))
+        {
+            return '';
+        }
+
+        $prepared = [];
+
+        foreach ($attributes as $name => $value)
+        {
+            $prepared[] = $name . '="' . htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '"';
+        }
+
+        return $prepared ? ' ' . implode(' ', $prepared) : '';
+    }
+
+    /**
+     * Разбор HTML ячейки таблицы с сохранением базовых атрибутов
+     */
+    protected function parseTableCellHtml ($html) : array
+    {
+        $dom = new DOMDocument('1.0', 'UTF-8');
+        @$dom->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+
+        $elements = $dom->getElementsByTagName('*');
+
+        $tag = 'td';
+        $text = '';
+        $attributes = [];
+
+        if ($elements->length)
+        {
+            $element = $elements->item(0);
+            $tag = strtolower($element->tagName);
+            $text = $this->cleanHyphenationText($element->textContent);
+
+            if ($element->hasAttributes())
+            {
+                foreach ($element->attributes as $attribute)
+                {
+                    $name = strtolower($attribute->name);
+                    if (in_array($name, ['colspan', 'rowspan']))
+                    {
+                        $attributes[$name] = $attribute->value;
+                    }
+                }
+            }
+        }
+
+        return [$tag, $text, $attributes];
     }
 
     /**
@@ -2238,13 +2296,18 @@ class ParserCommandOriginal extends Command
             return true;
         }
 
-        // Пустые списки/таблицы
-        if (collect(['ListGroup', 'Table'])->contains($blockType) && empty($children)) {
+        // Пустые списки
+        if ($blockType === 'ListGroup' && empty($children)) {
+            return true;
+        }
+
+        // Пустые таблицы без html-контента
+        if ($blockType === 'Table' && empty($children) && !strlen(trim($html))) {
             return true;
         }
 
         // Элементы без html/изображений
-        if (collect(['SectionHeader', 'Text', 'ListItem', 'Caption', 'TableCell', 'PageHeader', 'PageFooter'])->contains($blockType) && !strlen(trim($html))) {
+        if (collect(['SectionHeader', 'Text', 'ListItem', 'Caption', 'PageHeader', 'PageFooter'])->contains($blockType) && !strlen(trim($html))) {
             return true;
         }
 
@@ -2820,7 +2883,7 @@ class ParserCommandOriginal extends Command
     /**
      * Группируем ячейки таблицы по строкам сверху вниз с учетом пересечения по высоте
      */
-    public function buildTableRows ($cells, $tolerance = 5)
+    public function buildTableRows ($cells, $overlapThreshold = 1)
     {
         $cells = array_values(array_filter($cells, function ($el) {
             return is_array($el) && isset($el['bbox']);
@@ -2850,8 +2913,11 @@ class ParserCommandOriginal extends Command
             $last_key = array_key_last($rows);
             $last_row = &$rows[$last_key];
 
-            // Если верх ячейки находится в пределах предыдущей строки + допустимый отступ, добавляем в ту же строку
-            if ($cell['bbox'][self::BBOX_POSITION_TOP] <= ($last_row['bbox'][self::BBOX_POSITION_BOTTOM] + $tolerance))
+            $overlap = min($last_row['bbox'][self::BBOX_POSITION_BOTTOM], $cell['bbox'][self::BBOX_POSITION_BOTTOM])
+                - max($last_row['bbox'][self::BBOX_POSITION_TOP], $cell['bbox'][self::BBOX_POSITION_TOP]);
+
+            // В одну строку добавляем только если ячейки действительно пересекаются по высоте
+            if ($overlap > $overlapThreshold)
             {
                 $last_row['cells'][] = $cell;
                 $last_row['bbox'] = $this->mergeBboxes($last_row['bbox'], $cell['bbox']);
