@@ -1434,6 +1434,7 @@ class ParserCommandOriginal extends Command
     {
         $isTextLike = in_array($element['block_type'], ['SectionHeader', 'Text']);
         $isCenteredByBbox = $this->visionChildIsCenterX($bbox_parent, $element['bbox']);
+        $forceCenterByLeftCoord = $this->shouldForceCenterByLeftCoord($element);
         $hasJustify = $this->hasJustifyContent($classes_parent);
 
         // Единственный элемент-колонка должен занимать всю ширину
@@ -1467,6 +1468,13 @@ class ParserCommandOriginal extends Command
             return;
         }
 
+        if ($forceCenterByLeftCoord)
+        {
+            $this->setJustifyContentClass($classes_parent, 'justify-content-center');
+            $hasJustify = $this->hasJustifyContent($classes_parent);
+            $isCenteredByBbox = true;
+        }
+
         // Определяем смещение центра относительно родителя
         if (!$hasJustify)
         {
@@ -1484,7 +1492,7 @@ class ParserCommandOriginal extends Command
             }
         }
 
-        if ($isCenteredByBbox && $isTextLike && ($this->hasJustifyCenter($classes_parent) || !$hasJustify))
+        if (($isCenteredByBbox || $forceCenterByLeftCoord) && $isTextLike && ($this->hasJustifyCenter($classes_parent) || !$hasJustify))
         {
             $classes_child[] = 'text-center';
         }
@@ -1959,6 +1967,18 @@ class ParserCommandOriginal extends Command
         $offset_right = max(0, $bbox_parent[self::BBOX_POSITION_RIGHT] - $bbox_child[self::BBOX_POSITION_RIGHT]);
 
         return abs($offset_left - $offset_right) <= $tolerance;
+    }
+
+    /**
+     * Центруем элементы с координатой слева в районе 144.75 (±10) из clasters.txt
+     */
+    protected function shouldForceCenterByLeftCoord (array $element, $target = 164.75, $tolerance = 60)
+    {
+        if (!isset($element['bbox'][self::BBOX_POSITION_LEFT])) {
+            return false;
+        }
+
+        return abs($element['bbox'][self::BBOX_POSITION_LEFT] - $target) <= $tolerance;
     }
 
     public function visionChildIsLeftX ($bbox_parent, $bbox_child, $tolerance = 15)
