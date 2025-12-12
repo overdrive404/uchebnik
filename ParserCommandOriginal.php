@@ -629,7 +629,7 @@ class ParserCommandOriginal extends Command
                 if ($parent['block_type'] == 'Row') $parent['block_classes'][] = 'justify-content-end';
                 if ($child['block_type'] == 'Col')  $child['block_classes'][] = $this->visionChildWidthClasses($parent['bbox'], $child['bbox']);
             }
-            elseif ($this->visionChildIsCenterX($parent['bbox'], $child['bbox']))
+            elseif ($this->visionChildIsCenterX($parent['bbox'], $child['bbox'], 15))
             {
                 if ($parent['block_type'] == 'Row') $parent['block_classes'][] = 'justify-content-center';
                 if ($child['block_type'] == 'Col')  $child['block_classes'][] = $this->visionChildWidthClasses($parent['bbox'], $child['bbox']);
@@ -1434,7 +1434,9 @@ class ParserCommandOriginal extends Command
     {
         $isTextLike = in_array($element['block_type'], ['SectionHeader', 'Text']);
         $isCenteredByBbox = $this->visionChildIsCenterX($bbox_parent, $element['bbox']);
+        $isCenteredByPage = $this->isElementCenteredOnPage($element, $bbox_parent);
         $forceCenterByLeftCoord = $this->shouldForceCenterByLeftCoord($element);
+        $isNarrowForCenter = $this->isChildNarrowForCenter($bbox_parent, $element['bbox']);
         $hasJustify = $this->hasJustifyContent($classes_parent);
 
         // Единственный элемент-колонка должен занимать всю ширину
@@ -1468,7 +1470,8 @@ class ParserCommandOriginal extends Command
             return;
         }
 
-        if ($forceCenterByLeftCoord)
+        // Центрируем узкие блоки, если они визуально в центре страницы/родителя
+        if ($isNarrowForCenter && ($forceCenterByLeftCoord || $isCenteredByBbox || $isCenteredByPage))
         {
             $this->setJustifyContentClass($classes_parent, 'justify-content-center');
             $hasJustify = $this->hasJustifyContent($classes_parent);
@@ -1522,7 +1525,7 @@ class ParserCommandOriginal extends Command
             {
                 $classes_parent[] = 'justify-content-end';
             }
-            elseif ($this->visionChildIsCenterX($bbox_parent, $bbox_child))
+            elseif ($this->visionChildIsCenterX($bbox_parent, $bbox_child, 15))
             {
                 $classes_parent[] = 'justify-content-center';
             }
@@ -1960,8 +1963,71 @@ class ParserCommandOriginal extends Command
         return ($parent_left >= $child_left && $parent_right <= $child_right);
     }
 
-    public function visionChildIsCenterX ($bbox_parent, $bbox_child, $tolerance = 15)
+    /**
+     * Допуск для определения центрирования. Берем 5% ширины родителя,
+     * но не менее 15 px, чтобы работать одинаково на широких и узких полосах.
+     */
+    protected function calculateCenterTolerance (array $bbox_parent, $minTolerance = 15, $ratio = 0.05) : float
     {
+        $parent_width = max(1, abs($bbox_parent[self::BBOX_POSITION_RIGHT] - $bbox_parent[self::BBOX_POSITION_LEFT]));
+
+        return max($minTolerance, $parent_width * $ratio);
+    }
+
+    /**
+     * Проверяем, что элемент относительно узкий. Так мы не будем
+     * насильно центрировать длинные абзацы, даже если они почти занимают всю ширину.
+     */
+    protected function isChildNarrowForCenter (array $bbox_parent, array $bbox_child, $maxRatio = 0.75) : bool
+    {
+        $parent_width = max(1, abs($bbox_parent[self::BBOX_POSITION_RIGHT] - $bbox_parent[self::BBOX_POSITION_LEFT]));
+        $child_width = max(1, abs($bbox_child[self::BBOX_POSITION_RIGHT] - $bbox_child[self::BBOX_POSITION_LEFT]));
+
+        return ($child_width / $parent_width) <= $maxRatio;
+    }
+
+    /**
+     * Определяем BBOX страницы по элементу
+     */
+    protected function getPageBboxForElement (array $element) : ?array
+    {
+        if (empty($element['id'])) {
+            return null;
+        }
+
+        $meta = $this->getMetaData($element['id']);
+        $pageIndex = $this->clustersFindPageIndex((int) ($meta[self::META_PAGE] ?? 0));
+
+        if ($pageIndex === false) {
+            return null;
+        }
+
+        return self::$clusters['children'][$pageIndex]['bbox'] ?? null;
+    }
+
+    /**
+     * Дополнительная проверка центрирования относительно всей страницы
+     */
+    protected function isElementCenteredOnPage (array $element, array $bbox_parent) : bool
+    {
+        $pageBbox = $this->getPageBboxForElement($element);
+
+        if (!$pageBbox) {
+            return false;
+        }
+
+        $tolerance = $this->calculateCenterTolerance($pageBbox);
+
+        return $this->visionChildIsCenterX($pageBbox, $element['bbox'], $tolerance);
+    }
+
+    public function visionChildIsCenterX ($bbox_parent, $bbox_child, $tolerance = null)
+    {
+        if ($tolerance === null)
+        {
+            $tolerance = $this->calculateCenterTolerance($bbox_parent);
+        }
+
         // Сравниваем остаток свободного пространства слева и справа с учетом допуска
         $offset_left = max(0, $bbox_child[self::BBOX_POSITION_LEFT] - $bbox_parent[self::BBOX_POSITION_LEFT]);
         $offset_right = max(0, $bbox_parent[self::BBOX_POSITION_RIGHT] - $bbox_child[self::BBOX_POSITION_RIGHT]);
