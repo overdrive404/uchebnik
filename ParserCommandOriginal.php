@@ -1236,7 +1236,7 @@ class ParserCommandOriginal extends Command
      * Перебираем элементы линии
      * Для парсинга нам нужен BBOX родителя и элементы содержащиеся внутри
      */
-    public function parseElements ($bbox, $elements, $classes_parent = [], $classes_child = [])
+    public function parseElements ($bbox, $elements, $classes_parent = [], $classes_child = [], $isSingleInLine = null)
     {
         // Отсекаем полностью пустые контейнеры/элементы без html/изображений
         $elements = array_values(array_filter($elements, function ($el) {
@@ -1248,6 +1248,11 @@ class ParserCommandOriginal extends Command
 
         // Собираем Table и прилегающие к ним TableCell обратно в единую структуру
         $elements = $this->mergeTablesWithCells($elements);
+
+        if ($isSingleInLine === null)
+        {
+            $isSingleInLine = count($elements) === 1;
+        }
 
         // Если перед нами сразу набор пунктов списка, рисуем их единым списком без div-оберток
         $isPureList = collect($elements)->every(function ($el) {
@@ -1267,7 +1272,7 @@ class ParserCommandOriginal extends Command
         if (count($elements) == 1)
         {
             $element = $elements[0];
-            $this->calcClassesSingleChild($bbox, $element, $classes_parent, $classes_child, $element['html']);
+            $this->calcClassesSingleChild($bbox, $element, $classes_parent, $classes_child, $element['html'], $isSingleInLine);
 
             // Гарантируем наличие хотя бы базового класса col, если элемент в строке и это колонка без классов
             if ($element['block_type'] == 'Col' && empty($classes_child))
@@ -1310,13 +1315,24 @@ class ParserCommandOriginal extends Command
                     $row_classes_parent[] = 'justify-content-center';
                 }
 
+                $rowHasSingleChild = count($row['children']) === 1;
+
                 foreach ($row['children'] as $child)
                 {
                     $row_classes_child_local = $row_classes_child;
-                    // Любой дочерний блок получает ширину по bbox (даже если это не Col), чтобы сохранить горизонтальное расположение
-                    $row_classes_child_local[] = $this->visionChildWidthClasses($row['bbox'], $child['bbox']);
+                    $row_classes_child_local = $this->stripWidthClasses($row_classes_child_local);
 
-                    $this->parseElements($row['bbox'], [$child], $row_classes_parent, $row_classes_child_local);
+                    if ($rowHasSingleChild)
+                    {
+                        $row_classes_child_local[] = 'col-12';
+                    }
+                    else
+                    {
+                        // Любой дочерний блок получает ширину по bbox (даже если это не Col), чтобы сохранить горизонтальное расположение
+                        $row_classes_child_local[] = $this->visionChildWidthClasses($row['bbox'], $child['bbox']);
+                    }
+
+                    $this->parseElements($row['bbox'], [$child], $row_classes_parent, $row_classes_child_local, $rowHasSingleChild);
                 }
             }
         }
@@ -1430,7 +1446,7 @@ class ParserCommandOriginal extends Command
     /**
      * Простейший расчет классов и выравниваний на основе позиции элемента
      */
-    public function calcClassesSingleChild ($bbox_parent, $element, array &$classes_parent, array &$classes_child, $html = '')
+    public function calcClassesSingleChild ($bbox_parent, $element, array &$classes_parent, array &$classes_child, $html = '', $isSingleInLine = false)
     {
         $isTextLike = in_array($element['block_type'], ['SectionHeader', 'Text']);
         $isCenteredByBbox = $this->visionChildIsCenterX($bbox_parent, $element['bbox']);
@@ -1439,22 +1455,20 @@ class ParserCommandOriginal extends Command
         $isNarrowForCenter = $this->isChildNarrowForCenter($bbox_parent, $element['bbox']);
         $hasJustify = $this->hasJustifyContent($classes_parent);
 
-        // Единственный элемент-колонка должен занимать всю ширину
-        if ($element['block_type'] == 'Col')
+        if ($isSingleInLine)
         {
-            $classes_child = array_values(array_filter($classes_child, function ($class) {
-                return !preg_match('/^col(-[a-z]+)?-\\d+$/', $class);
-            }));
+            // Единственный элемент в линии занимает всю ширину
+            $classes_child = $this->stripWidthClasses($classes_child);
             $classes_child[] = 'col-12';
         }
         else
         {
-            // Чистим ранее рассчитанные ширины перед добавлением новой
-            $classes_child = array_values(array_filter($classes_child, function ($class) {
-                return !preg_match('/^col(-[a-z]+)?-\\d+$/', $class);
-            }));
-            // Для любых других элементов тоже задаём ширину по bbox, иначе они растягиваются на всю строку
-            $classes_child[] = $this->visionChildWidthClasses($bbox_parent, $element['bbox']);
+            // Для элементов, которые делят строку с другими, считаем ширину только если ее нет
+            if (!$this->hasWidthClass($classes_child))
+            {
+                $classes_child = $this->stripWidthClasses($classes_child);
+                $classes_child[] = $this->visionChildWidthClasses($bbox_parent, $element['bbox']);
+            }
         }
 
         // Ширина строки
@@ -2099,6 +2113,32 @@ class ParserCommandOriginal extends Command
         foreach ($classes as $class)
         {
             if (preg_match('/^justify-content-center$/', $class))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Удаляем ранее рассчитанные классы ширины колонок
+     */
+    protected function stripWidthClasses (array $classes) : array
+    {
+        return array_values(array_filter($classes, function ($class) {
+            return !preg_match('/^col(-[a-z]+)?-\\d+$/', $class);
+        }));
+    }
+
+    /**
+     * Проверяем, что у элемента уже есть класс ширины колонки
+     */
+    protected function hasWidthClass (array $classes) : bool
+    {
+        foreach ($classes as $class)
+        {
+            if (preg_match('/^col(-[a-z]+)?-\\d+$/', $class))
             {
                 return true;
             }
