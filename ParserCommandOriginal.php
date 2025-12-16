@@ -174,6 +174,11 @@ class ParserCommandOriginal extends Command
     static $strukturesParagraph = '';
     static $strukturesSequence = 0;
 
+    /**
+     * Отслеживание незавершенных блоков, которым нужен end-continuation
+     */
+    static $pendingContinuations = [];
+
     static $clustersSequence = 0;
 
     static $book_content_max_width = 0;
@@ -1653,6 +1658,8 @@ class ParserCommandOriginal extends Command
         exit();
         */
 
+        $continuationClasses = $this->getContinuationClasses($element);
+
 
         if ($element['block_type'] == 'SectionHeader')
         {
@@ -1661,8 +1668,9 @@ class ParserCommandOriginal extends Command
 
             [$element_tag, $element_text] = $this->parseElementsHtml($element['html']);
 
-            //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes_child) . '">');
-            $this->structureAppend(self::CONTENT_TYPE_HTML, '<' . $element_tag . '>');
+            $openingTag = $this->buildOpeningTag($element_tag, [], $continuationClasses);
+
+            $this->structureAppend(self::CONTENT_TYPE_HTML, $openingTag);
             $this->structureAppend(self::CONTENT_TYPE_SECTION, '<span>' . $element_text . '</span>');
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '</div>');
@@ -1677,7 +1685,9 @@ class ParserCommandOriginal extends Command
 
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<div class="col-12">');
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes_child) . '">');
-            $this->structureAppend(self::CONTENT_TYPE_HTML, '<' . $element_tag . '>');
+            $openingTag = $this->buildOpeningTag($element_tag, [], $continuationClasses);
+
+            $this->structureAppend(self::CONTENT_TYPE_HTML, $openingTag);
             $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>');
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '</div>');
@@ -1689,7 +1699,9 @@ class ParserCommandOriginal extends Command
 
             [$element_tag, $element_text] = $this->parseElementsHtml($element['html']);
 
-            $this->structureAppend(self::CONTENT_TYPE_HTML, '<' . $element_tag . '>');
+            $openingTag = $this->buildOpeningTag($element_tag, [], $continuationClasses);
+
+            $this->structureAppend(self::CONTENT_TYPE_HTML, $openingTag);
             $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>');
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
         }
@@ -1704,7 +1716,9 @@ class ParserCommandOriginal extends Command
 
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<div class="col-12">');
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<ul class="col-12">');
-            $this->structureAppend(self::CONTENT_TYPE_HTML, '<ul>');
+            $openingTag = $this->buildOpeningTag('ul', [], $continuationClasses);
+
+            $this->structureAppend(self::CONTENT_TYPE_HTML, $openingTag);
 
             // Рендерим пункты списка без оберток row/col, сохраняем порядок детей
             foreach ($element['children'] as $listChild) {
@@ -1722,7 +1736,9 @@ class ParserCommandOriginal extends Command
             $this->calcParentAndChildrenClasses($bbox, $element['bbox'], $classes_parent, $classes_child);
             [$element_tag, $element_text, $nested_lists] = $this->parseListItemWithNestedLists($element['html']);
 
-            $this->structureAppend(self::CONTENT_TYPE_HTML, '<' . $element_tag . '>');
+            $openingTag = $this->buildOpeningTag($element_tag, [], $continuationClasses);
+
+            $this->structureAppend(self::CONTENT_TYPE_HTML, $openingTag);
             $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>');
             foreach ($nested_lists as $listHtml) {
                 $this->structureAppend(self::CONTENT_TYPE_HTML, $listHtml);
@@ -1747,7 +1763,9 @@ class ParserCommandOriginal extends Command
                 return false;
             }
 
-            $this->structureAppend(self::CONTENT_TYPE_HTML, '<table>');
+            $tableAttributes = $continuationClasses ? ['class' => implode(' ', $continuationClasses)] : [];
+
+            $this->structureAppend(self::CONTENT_TYPE_HTML, $this->buildOpeningTag('table', $tableAttributes));
             $this->structureAppend(self::CONTENT_TYPE_HTML, '<tbody>');
 
             $table_rows = $this->buildTableRows($element['children']);
@@ -1760,9 +1778,10 @@ class ParserCommandOriginal extends Command
                 {
                     [$cell_tag, $cell_text, $cell_attributes] = $this->parseTableCellHtml($cell['html']);
                     $cell_tag = in_array(strtolower($cell_tag), ['td', 'th']) ? strtolower($cell_tag) : 'td';
-                    $attributes_string = $this->stringifyHtmlAttributes($cell_attributes);
+                    $cellContinuationClasses = $this->getContinuationClasses($cell);
+                    $openingCellTag = $this->buildOpeningTag($cell_tag, $cell_attributes, $cellContinuationClasses);
 
-                    $this->structureAppend(self::CONTENT_TYPE_HTML, '<' . $cell_tag . $attributes_string . '>');
+                    $this->structureAppend(self::CONTENT_TYPE_HTML, $openingCellTag);
                     if (strlen(trim($cell_text)))
                     {
                         $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $cell_text . '</span>');
@@ -1781,9 +1800,9 @@ class ParserCommandOriginal extends Command
         {
             [$cell_tag, $cell_text, $cell_attributes] = $this->parseTableCellHtml($element['html']);
             $cell_tag = in_array(strtolower($cell_tag), ['td', 'th']) ? strtolower($cell_tag) : 'td';
-            $attributes_string = $this->stringifyHtmlAttributes($cell_attributes);
+            $openingCellTag = $this->buildOpeningTag($cell_tag, $cell_attributes, $continuationClasses);
 
-            $this->structureAppend(self::CONTENT_TYPE_HTML, '<' . $cell_tag . $attributes_string . '>');
+            $this->structureAppend(self::CONTENT_TYPE_HTML, $openingCellTag);
             if (strlen(trim($cell_text)))
             {
                 $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $cell_text . '</span>');
@@ -1804,7 +1823,9 @@ class ParserCommandOriginal extends Command
                 foreach ($images as $image_path)
                 {
                     $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="col-md-6">');
-                    $this->structureAppend(self::CONTENT_TYPE_IMAGE, '<img src="../images/' . $image_path . '">');
+                    $imageTag = $this->buildOpeningTag('img', ['src' => '../images/' . $image_path], $continuationClasses);
+
+                    $this->structureAppend(self::CONTENT_TYPE_IMAGE, $imageTag);
                     $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
                 }
 
@@ -1814,7 +1835,9 @@ class ParserCommandOriginal extends Command
             {
                 foreach ($images as $image_path)
                 {
-                    $this->structureAppend(self::CONTENT_TYPE_IMAGE, '<img src="../images/' . $image_path . '">');
+                    $imageTag = $this->buildOpeningTag('img', ['src' => '../images/' . $image_path], $continuationClasses);
+
+                    $this->structureAppend(self::CONTENT_TYPE_IMAGE, $imageTag);
                 }
             }
         }
@@ -2246,6 +2269,86 @@ class ParserCommandOriginal extends Command
         }
 
         return $prepared ? ' ' . implode(' ', $prepared) : '';
+    }
+
+    /**
+     * Собираем открывающий тег с атрибутами и дополнительными классами
+     */
+    protected function buildOpeningTag (string $tag, array $attributes = [], array $classes = []) : string
+    {
+        $existingClasses = [];
+
+        if (!empty($attributes['class']))
+        {
+            $existingClasses = preg_split('/\\s+/', (string) $attributes['class'], -1, PREG_SPLIT_NO_EMPTY);
+        }
+
+        $classList = array_values(array_unique(array_filter(array_merge($existingClasses, $classes))));
+
+        if ($classList)
+        {
+            $attributes['class'] = implode(' ', $classList);
+        }
+        elseif (isset($attributes['class']))
+        {
+            unset($attributes['class']);
+        }
+
+        $attributes_string = $this->stringifyHtmlAttributes($attributes);
+
+        return '<' . $tag . $attributes_string . '>';
+    }
+
+    /**
+     * Проверяем наличие флага продолжения в данных элемента
+     */
+    protected function elementHasContinuationFlag (array $element) : bool
+    {
+        if (isset($element['block_classes']) && in_array('has-continuation', $element['block_classes'], true))
+        {
+            return true;
+        }
+
+        $html = $element['html'] ?? '';
+        if (!is_string($html) || $html === '')
+        {
+            return false;
+        }
+
+        return stripos($html, 'has-continuation') !== false;
+    }
+
+    /**
+     * Возвращаем набор классов start/end-continuation и фиксируем ожидание закрытия
+     */
+    protected function getContinuationClasses (array $element) : array
+    {
+        $blockType = $element['block_type'] ?? '';
+        if (!$blockType)
+        {
+            return [];
+        }
+
+        $classes = [];
+
+        if (!empty(self::$pendingContinuations[$blockType]))
+        {
+            $classes[] = 'end-continuation';
+            self::$pendingContinuations[$blockType] -= 1;
+
+            if (self::$pendingContinuations[$blockType] <= 0)
+            {
+                unset(self::$pendingContinuations[$blockType]);
+            }
+        }
+
+        if ($this->elementHasContinuationFlag($element))
+        {
+            $classes[] = 'start-continuation';
+            self::$pendingContinuations[$blockType] = (self::$pendingContinuations[$blockType] ?? 0) + 1;
+        }
+
+        return array_values(array_unique($classes));
     }
 
     /**
