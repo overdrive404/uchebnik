@@ -1823,7 +1823,8 @@ class ParserCommandOriginal extends Command
                 foreach ($images as $image_path)
                 {
                     $this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="col-md-6">');
-                    $imageTag = $this->buildOpeningTag('img', ['src' => '../images/' . $image_path], $continuationClasses);
+                    $imageClasses = $continuationClasses;
+                    $imageTag = $this->buildOpeningTag('img', ['src' => '../images/' . $image_path], $imageClasses);
 
                     $this->structureAppend(self::CONTENT_TYPE_IMAGE, $imageTag);
                     $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
@@ -1835,7 +1836,16 @@ class ParserCommandOriginal extends Command
             {
                 foreach ($images as $image_path)
                 {
-                    $imageTag = $this->buildOpeningTag('img', ['src' => '../images/' . $image_path], $continuationClasses);
+                    $imageClasses = $continuationClasses;
+
+                    // Центрируем одиночные изображения
+                    if (count($images) === 1)
+                    {
+                        $imageClasses[] = 'd-block';
+                        $imageClasses[] = 'mx-auto';
+                    }
+
+                    $imageTag = $this->buildOpeningTag('img', ['src' => '../images/' . $image_path], $imageClasses);
 
                     $this->structureAppend(self::CONTENT_TYPE_IMAGE, $imageTag);
                 }
