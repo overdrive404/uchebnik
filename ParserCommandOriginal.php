@@ -2250,6 +2250,7 @@ class ParserCommandOriginal extends Command
         }
 
         $text = $this->cleanHyphenationText(strip_tags(implode('', $textParts)));
+        $text = $this->cleanLatexLikeText($text);
 
         return [$root->tagName, $text, $nestedLists];
     }
@@ -2380,6 +2381,7 @@ class ParserCommandOriginal extends Command
             $element = $elements->item(0);
             $tag = strtolower($element->tagName);
             $text = $this->cleanHyphenationText($element->textContent);
+            $text = $this->cleanLatexLikeText($text);
 
             if ($element->hasAttributes())
             {
@@ -2419,6 +2421,7 @@ class ParserCommandOriginal extends Command
 
         $tag = $elements[0]->tagName;
         $text = $this->cleanHyphenationText($elements[0]->textContent);
+        $text = $this->cleanLatexLikeText($text);
 
         return [$tag, $text];
     }
@@ -2465,6 +2468,82 @@ class ParserCommandOriginal extends Command
         $text = preg_replace('/([A-Za-zА-Яа-яЁё])-\s+([A-Za-zА-Яа-яЁё])/u', '$1$2', $text);
 
         return $text;
+    }
+
+    /**
+     * Удаляем LaTeX-подобные команды и артефакты (например: \bf{B}, \mathbf{R}, \mathbf{M}% _{H}=\mathbf{M}_{H})
+     */
+    public function cleanLatexLikeText ($text)
+    {
+        if (!is_string($text) || $text === '')
+        {
+            return $text;
+        }
+
+        // Нормализуем пробелы для устойчивой обработки
+        $text = str_replace(["\r", "\n", "\t"], ' ', $text);
+
+        // LaTeX перенос строки внутри формул: \\ -> пробел
+        $text = preg_replace('/\\\\\\\\/u', ' ', $text);
+
+        // Убираем символ % когда он используется как "склейка строк" в LaTeX: ...% _{H}...
+        $text = preg_replace('/(\\S)%\\s*(?=[_\\^\\\\])/u', '$1', $text);
+
+        // Убираем команды пробелов в math-mode: \, \; \: \!
+        $text = preg_replace('/\\\\[,;:!]/u', '', $text);
+
+        // Неразрывный пробел LaTeX
+        $text = str_replace('~', ' ', $text);
+
+        // \left и \right не несут смысла в тексте
+        $text = preg_replace('/\\\\left\\b|\\\\right\\b/u', '', $text);
+
+        // \begin{...} / \end{...} (матрицы и т.п.) — убираем обертку
+        $text = preg_replace('/\\\\begin\\s*\\{[^}]*\\}/u', '', $text);
+        $text = preg_replace('/\\\\end\\s*\\{[^}]*\\}/u', '', $text);
+
+        // Убираем наиболее частые конструкции команд с аргументами
+        do
+        {
+            $prev = $text;
+
+            // \command{...} -> ...
+            $text = preg_replace('/\\\\[A-Za-z]+\\*?\\s*\\{([^{}]*)\\}/u', '$1', $text);
+
+            // {\command ...} -> ...
+            $text = preg_replace('/\\{\\s*\\\\[A-Za-z]+\\*?\\s*([^{}]*)\\}/u', '$1', $text);
+        }
+        while ($text !== $prev);
+
+        // \command X -> X (например: \mathbf 1)
+        $text = preg_replace('/\\\\[A-Za-z]+\\*?\\s+([A-Za-z0-9]+)/u', '$1', $text);
+
+        // Убираем оставшиеся команды вида \command
+        $text = preg_replace('/\\\\[A-Za-z]+\\*?/u', '', $text);
+
+        // Убираем индексы/степени: _{H}, ^{2}, _H, ^2
+        $text = preg_replace('/[_\\^]\\s*\\{([^{}]*)\\}/u', '$1', $text);
+        $text = preg_replace('/[_\\^]([A-Za-z0-9]+)/u', '$1', $text);
+
+        // Убираем оставшиеся фигурные скобки
+        $text = str_replace(['{', '}'], '', $text);
+
+        // Частый OCR-артефакт: одиночная латинская буква перед кириллицей (Bбактерий, Mже)
+        $text = preg_replace('/(^|[\\s\\p{P}])[A-Za-z](?=\\p{Cyrillic})/u', '$1', $text);
+
+        // Остатки формул вида "MH=MHхищников" — удаляем часть до кириллицы
+        $text = preg_replace('/(^|[\\s\\p{P}])[A-Za-z0-9]+=[A-Za-z0-9=]+(?=\\p{Cyrillic})/u', '$1', $text);
+
+        // Схлопываем пробелы
+        $text = preg_replace('/\\s+/u', ' ', $text);
+
+        // Убираем пробелы перед знаками препинания
+        $text = preg_replace('/\\s+([,.;:!?\\)\\]\\}])/u', '$1', $text);
+
+        // Убираем пробелы после открывающих скобок
+        $text = preg_replace('/([\\(\\[\\{])\\s+/u', '$1', $text);
+
+        return trim($text);
     }
 
 
