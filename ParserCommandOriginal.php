@@ -161,6 +161,7 @@ class ParserCommandOriginal extends Command
      * Контент книги
      */
     static $struktures = [];
+    static $structureIdByJsonId = [];
 
     static $strukturesId = 0;
     static $strukturesPage = 0;
@@ -271,9 +272,6 @@ class ParserCommandOriginal extends Command
         $this->info('Step: saveOutData() -> clasters.txt');
         $this->saveOutData('clasters.txt', self::$clusters);
 
-        $this->info('Step: hierarchy() -> hierarchy.txt');
-        $this->saveOutData('hierarchy.txt', self::$hierarchy);
-
         //$this->info('clusters()');
         //$this->info(print_r(self::$clusters, true));
         //exit();
@@ -286,6 +284,12 @@ class ParserCommandOriginal extends Command
 
         $this->info('Step: saveOutData() -> structures.txt');
         $this->saveOutData('structures.txt', self::$struktures);
+
+        $this->info('Step: applyHierarchyStructureIds()');
+        $this->applyHierarchyStructureIds();
+
+        $this->info('Step: hierarchy() -> hierarchy.txt');
+        $this->saveOutData('hierarchy.txt', self::$hierarchy);
 
         $this->info('Step: saveOutHtml()');
         $fileHtmlName = explode('/', self::$folderPath)[1] . '.html';
@@ -765,6 +769,39 @@ class ParserCommandOriginal extends Command
         foreach ($clusters['children'] as $index => &$cluster)
         {
             $this->hierarchy($cluster);
+        }
+    }
+
+    public function applyHierarchyStructureIds ()
+    {
+        if (empty(self::$hierarchy) || empty(self::$structureIdByJsonId))
+        {
+            return;
+        }
+
+        foreach (self::$hierarchy as &$node)
+        {
+            $this->applyHierarchyStructureIdsToNode($node);
+        }
+        unset($node);
+    }
+
+    protected function applyHierarchyStructureIdsToNode (&$node)
+    {
+        $jsonId = $node['json_id'] ?? null;
+
+        if ($jsonId && isset(self::$structureIdByJsonId[$jsonId]))
+        {
+            $node['id'] = self::$structureIdByJsonId[$jsonId];
+        }
+
+        if (!empty($node['children']) && is_array($node['children']))
+        {
+            foreach ($node['children'] as &$child)
+            {
+                $this->applyHierarchyStructureIdsToNode($child);
+            }
+            unset($child);
         }
     }
 
@@ -1671,7 +1708,7 @@ class ParserCommandOriginal extends Command
             $openingTag = $this->buildOpeningTag($element_tag, [], $continuationClasses);
 
             $this->structureAppend(self::CONTENT_TYPE_HTML, $openingTag);
-            $this->structureAppend(self::CONTENT_TYPE_SECTION, '<span>' . $element_text . '</span>');
+            $this->structureAppend(self::CONTENT_TYPE_SECTION, '<span>' . $element_text . '</span>', $element['id'] ?? null);
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '</div>');
         }
@@ -1688,7 +1725,7 @@ class ParserCommandOriginal extends Command
             $openingTag = $this->buildOpeningTag($element_tag, [], $continuationClasses);
 
             $this->structureAppend(self::CONTENT_TYPE_HTML, $openingTag);
-            $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>');
+            $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>', $element['id'] ?? null);
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '</div>');
         }
@@ -1702,7 +1739,7 @@ class ParserCommandOriginal extends Command
             $openingTag = $this->buildOpeningTag($element_tag, [], $continuationClasses);
 
             $this->structureAppend(self::CONTENT_TYPE_HTML, $openingTag);
-            $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>');
+            $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>', $element['id'] ?? null);
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
         }
 
@@ -1739,7 +1776,7 @@ class ParserCommandOriginal extends Command
             $openingTag = $this->buildOpeningTag($element_tag, [], $continuationClasses);
 
             $this->structureAppend(self::CONTENT_TYPE_HTML, $openingTag);
-            $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>');
+            $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>', $element['id'] ?? null);
             foreach ($nested_lists as $listHtml) {
                 $this->structureAppend(self::CONTENT_TYPE_HTML, $listHtml);
             }
@@ -1784,7 +1821,7 @@ class ParserCommandOriginal extends Command
                     $this->structureAppend(self::CONTENT_TYPE_HTML, $openingCellTag);
                     if (strlen(trim($cell_text)))
                     {
-                        $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $cell_text . '</span>');
+                        $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $cell_text . '</span>', $cell['id'] ?? null);
                     }
                     $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $cell_tag . '>');
                 }
@@ -1805,7 +1842,7 @@ class ParserCommandOriginal extends Command
             $this->structureAppend(self::CONTENT_TYPE_HTML, $openingCellTag);
             if (strlen(trim($cell_text)))
             {
-                $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $cell_text . '</span>');
+                $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $cell_text . '</span>', $element['id'] ?? null);
             }
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $cell_tag . '>');
         }
@@ -1826,7 +1863,7 @@ class ParserCommandOriginal extends Command
                     $imageClasses = $continuationClasses;
                     $imageTag = $this->buildOpeningTag('img', ['src' => '../images/' . $image_path], $imageClasses);
 
-                    $this->structureAppend(self::CONTENT_TYPE_IMAGE, $imageTag);
+                    $this->structureAppend(self::CONTENT_TYPE_IMAGE, $imageTag, $element['id'] ?? null);
                     $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
                 }
 
@@ -1847,7 +1884,7 @@ class ParserCommandOriginal extends Command
 
                     $imageTag = $this->buildOpeningTag('img', ['src' => '../images/' . $image_path], $imageClasses);
 
-                    $this->structureAppend(self::CONTENT_TYPE_IMAGE, $imageTag);
+                    $this->structureAppend(self::CONTENT_TYPE_IMAGE, $imageTag, $element['id'] ?? null);
                 }
             }
         }
@@ -2581,7 +2618,7 @@ class ParserCommandOriginal extends Command
     /**
      * Заменяет функцию сверху
      */
-    public function structureAppend ($type, $html) : array
+    public function structureAppend ($type, $html, $sourceId = null) : array
     {
         self::$strukturesId += 1;
 
@@ -2595,6 +2632,11 @@ class ParserCommandOriginal extends Command
         $template['sequence'] = $template['synthesized_text'] ? ++self::$strukturesSequence : null;
 
         self::$struktures[] = $template;
+
+        if ($sourceId && !isset(self::$structureIdByJsonId[$sourceId]))
+        {
+            self::$structureIdByJsonId[$sourceId] = $template['id'];
+        }
 
         return $template;
     }

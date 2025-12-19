@@ -161,6 +161,7 @@ class ParserCommand extends Command
      * Контент книги
      */
     static $struktures = [];
+    static $structureIdByJsonId = [];
 
     static $strukturesId = 0;
     static $strukturesPage = 0;
@@ -705,6 +706,39 @@ class ParserCommand extends Command
         }
     }
 
+    public function applyHierarchyStructureIds ()
+    {
+        if (empty(self::$hierarchy) || empty(self::$structureIdByJsonId))
+        {
+            return;
+        }
+
+        foreach (self::$hierarchy as &$node)
+        {
+            $this->applyHierarchyStructureIdsToNode($node);
+        }
+        unset($node);
+    }
+
+    protected function applyHierarchyStructureIdsToNode (&$node)
+    {
+        $jsonId = $node['json_id'] ?? null;
+
+        if ($jsonId && isset(self::$structureIdByJsonId[$jsonId]))
+        {
+            $node['id'] = self::$structureIdByJsonId[$jsonId];
+        }
+
+        if (!empty($node['children']) && is_array($node['children']))
+        {
+            foreach ($node['children'] as &$child)
+            {
+                $this->applyHierarchyStructureIdsToNode($child);
+            }
+            unset($child);
+        }
+    }
+
     /**
      * Добавить новый элемент в заголовки
      */
@@ -865,7 +899,7 @@ class ParserCommand extends Command
 
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes_child) . '">');
             $this->structureAppend(self::CONTENT_TYPE_HTML, '<' . $element_tag . '>');
-            $this->structureAppend(self::CONTENT_TYPE_SECTION, '<span>' . $element_text . '</span>');
+            $this->structureAppend(self::CONTENT_TYPE_SECTION, '<span>' . $element_text . '</span>', $element['id'] ?? null);
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '</div>');
         }
@@ -880,7 +914,7 @@ class ParserCommand extends Command
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<div class="col-12">');
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes_child) . '">');
             $this->structureAppend(self::CONTENT_TYPE_HTML, '<' . $element_tag . '>');
-            $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>');
+            $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>', $element['id'] ?? null);
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
             //$this->createStructureElement(self::CONTENT_TYPE_HTML, '</div>');
         }
@@ -914,7 +948,7 @@ class ParserCommand extends Command
             [$element_tag, $element_text] = $this->parseElementsHtml($element['html']);
 
             $this->structureAppend(self::CONTENT_TYPE_HTML, '<' . $element_tag . '>');
-            $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>');
+            $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>', $element['id'] ?? null);
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
 
             /*
@@ -930,7 +964,7 @@ class ParserCommand extends Command
 
             foreach ($element['images'] as $image_key => $image_path)
             {
-                $this->structureAppend(self::CONTENT_TYPE_IMAGE, '<img src="../images/' . $image_path . '">');
+                $this->structureAppend(self::CONTENT_TYPE_IMAGE, '<img src="../images/' . $image_path . '">', $element['id'] ?? null);
             }
         }
 
@@ -1254,7 +1288,7 @@ class ParserCommand extends Command
     /**
      * Заменяет функцию сверху
      */
-    public function structureAppend ($type, $html) : array
+    public function structureAppend ($type, $html, $sourceId = null) : array
     {
         self::$strukturesId += 1;
 
@@ -1268,6 +1302,11 @@ class ParserCommand extends Command
         $template['sequence'] = $template['synthesized_text'] ? ++self::$strukturesSequence : null;
 
         self::$struktures[] = $template;
+
+        if ($sourceId && !isset(self::$structureIdByJsonId[$sourceId]))
+        {
+            self::$structureIdByJsonId[$sourceId] = $template['id'];
+        }
 
         return $template;
     }
