@@ -311,9 +311,7 @@ class ParserCommandOriginal extends Command
         //foreach ($children as $index => $child)
         foreach ($children as $child)
         {
-            // Ограничиваем разбор первыми 50 страницами
             $pageNumber = (int) $this->getMetaData($child['id'])[self::META_PAGE];
-            if ($pageNumber > 50) continue;
 
             if ($child['block_type'] == 'Page')
             {
@@ -382,6 +380,8 @@ class ParserCommandOriginal extends Command
         // Тут цель дойти до последнего кластера, в который мы по правилам можем впихнуть элемент
         do
         {
+            $process = false;
+
             foreach ($searched['children'] as $index => $search)
             {
                 if ($this->isBboxIntersectsByHeight($search['bbox'], $element['bbox'], 2))

@@ -342,6 +342,8 @@ class ParserCommand extends Command
         // Тут цель дойти до последнего кластера, в который мы по правилам можем впихнуть элемент
         do
         {
+            $process = false;
+
             foreach ($searched['children'] as $index => $search)
             {
                 if ($this->isBboxIntersectsByHeight($search['bbox'], $element['bbox'], 2))
