@@ -2607,7 +2607,16 @@ class ParserCommandOriginal extends Command
         $template['element_type'] = $type;
         $template['text'] = $html;
         $template['synthesized_text'] = strip_tags($html);
-        $template['sequence'] = $template['synthesized_text'] ? ++self::$strukturesSequence : null;
+
+        $hasEndContinuation = is_string($html) && stripos($html, 'end-continuation') !== false;
+        if ($hasEndContinuation)
+        {
+            $template['sequence'] = 1;
+        }
+        else
+        {
+            $template['sequence'] = $template['synthesized_text'] ? ++self::$strukturesSequence : null;
+        }
 
         self::$struktures[] = $template;
 
