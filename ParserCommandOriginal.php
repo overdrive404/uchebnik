@@ -14,16 +14,6 @@ class ParserCommandOriginal extends Command
     const META_ID = 'id';
 
     /**
-     * Ключ BBOX для ширины
-     */
-    const BBOX_WIDTH = 2;
-
-    /**
-     * Ключ BBOX для высоты
-     */
-    const BBOX_HEIGHT = 3;
-
-    /**
      * Ключ BBOX для позиции сверху
      */
     const BBOX_POSITION_TOP = 1;
@@ -62,16 +52,6 @@ class ParserCommandOriginal extends Command
     const CONTENT_TYPE_PARAGRAPH = 'paragraph';
     const CONTENT_TYPE_TEXT = 'sentence';
     const CONTENT_TYPE_IMAGE = 'image';
-
-    /**
-     * Класс незавершенного текста
-     */
-    const CLASS_TEXT_INCOMPLETION = 'text-incompletion';
-
-    /**
-     * Класс завершения текста
-     */
-    const CLASS_TEXT_COMPLETION = 'text-completion';
 
     /**
      * Иерархия типов
@@ -124,12 +104,6 @@ class ParserCommandOriginal extends Command
     static $fileContent;
 
     /**
-     * Удаленные элементы номеров страниц,
-     * на всякий случай для проверки что дропнули
-     */
-    static $deletedPageNumbersElements = [];
-
-    /**
      * Кооридинаты блока для
      * вхождения номеров страниц
      */
@@ -149,15 +123,6 @@ class ParserCommandOriginal extends Command
     static $hierarchy = [];
 
     /**
-     * Незавершенные параграфы
-     * для которых будем искать продолжение
-     *
-     * Сохраняем тут страницы и внутри их последние элементы
-     */
-    static $unfinished = [];
-
-
-    /**
      * Контент книги
      */
     static $struktures = [];
@@ -165,15 +130,6 @@ class ParserCommandOriginal extends Command
 
     static $strukturesId = 0;
     static $strukturesPage = 0;
-    static $strukturesPageReal = '';
-    static $strukturesPageWidth = '';
-    static $strukturesPageHeight = '';
-
-    static $structureReadableElementId = 0;
-
-    static $strukturesParentId = '';
-    static $strukturesParagraph = '';
-    static $strukturesSequence = 0;
 
     /**
      * Отслеживание незавершенных блоков, которым нужен end-continuation
@@ -181,9 +137,6 @@ class ParserCommandOriginal extends Command
     static $pendingContinuations = [];
 
     static $clustersSequence = 0;
-
-    static $book_content_max_width = 0;
-    static $book_content_max_height = 0;
 
     static $ocr_book_bbox = [
         self::PAGE_ODD => [
@@ -806,37 +759,6 @@ class ParserCommandOriginal extends Command
     }
 
     /**
-     * Добавить новый элемент в заголовки
-     */
-    public function hierarchyPushToCaptions ($level, $id)
-    {
-        $captions = &self::$hierarchyCaptions;
-
-        foreach ($captions as $caption_level => &$caption_data)
-        {
-            if ($caption_level == $level)
-            {
-                $caption_data = $id;
-            }
-            elseif ($caption_level > $level)
-            {
-                $caption_data = [];
-            }
-        }
-    }
-
-    /**
-     * Добавить данные в массив для теста
-     * сетки в выводе HTML
-     */
-    public function hierarchyPushToHtml ()
-    {
-
-    }
-
-
-
-    /**
      * Выполняем основной парсинг
      */
     public function parser ()
@@ -855,14 +777,6 @@ class ParserCommandOriginal extends Command
         // Привязываемся к реальному номеру страницы из данных, а не к порядку обхода
         $pageNumber = isset($data['block_page']) ? (int) $data['block_page'] : ($index + 1);
         self::$strukturesPage = $pageNumber;
-        /*
-        self::$strukturesPageReal = $data['number'];
-        self::$strukturesPageWidth = $data['width'];
-        self::$strukturesPageHeight = $data['height'];
-        */
-
-        self::$strukturesSequence = 0;
-        //self::$structureReadableElementId = 0;
 
         if (empty($data['children']))
         {
@@ -1593,33 +1507,7 @@ class ParserCommandOriginal extends Command
         $classes_child = array_values(array_unique($classes_child));
     }
 
-    public function parseElementsInRow ()
-    {
-
-    }
-
-
-
-
-    public function parseElementsIntersects ($elements)
-    {
-        $this->info('parseElementsIntersects ($elements)');
-
-        // Проведем сортировку с верху и с лева
-        usort($elements, function ($a, $b)
-        {
-            if ($a->bbox[self::BBOX_POSITION_TOP] === $b->bbox[self::BBOX_POSITION_TOP])
-            {
-                return $a->bbox[self::BBOX_POSITION_LEFT] <=> $b->bbox[self::BBOX_POSITION_LEFT];
-            }
-            return $a->bbox[self::BBOX_POSITION_TOP] <=> $b->bbox[self::BBOX_POSITION_TOP];
-        });
-    }
-
-
     //$this->structureAppend(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes_parent) . '">');
-
-    // Переделка функции ниже parseElement
     public function structurePrepareElement ($bbox, $element, $classes_parent = [], $classes_child = [], $wrap = true)
     {
         // Выкинем сразу пустые
@@ -1710,7 +1598,6 @@ class ParserCommandOriginal extends Command
             $this->structureAppend(self::CONTENT_TYPE_HTML, $openingTag);
             $this->structureAppend(self::CONTENT_TYPE_SECTION, '<span>' . $element_text . '</span>', $element['id'] ?? null);
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
-            //$this->createStructureElement(self::CONTENT_TYPE_HTML, '</div>');
         }
 
         elseif ($element['block_type'] == 'Text')
@@ -1720,14 +1607,11 @@ class ParserCommandOriginal extends Command
 
             [$element_tag, $element_text] = $this->parseElementsHtml($element['html']);
 
-            //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<div class="col-12">');
-            //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes_child) . '">');
             $openingTag = $this->buildOpeningTag($element_tag, [], $continuationClasses);
 
             $this->structureAppend(self::CONTENT_TYPE_HTML, $openingTag);
             $this->structureAppend(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>', $element['id'] ?? null);
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
-            //$this->createStructureElement(self::CONTENT_TYPE_HTML, '</div>');
         }
 
         elseif ($element['block_type'] == 'Caption')
@@ -1751,8 +1635,6 @@ class ParserCommandOriginal extends Command
             if (!count($element['children'])) return false;
 
 
-            //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<div class="col-12">');
-            //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<ul class="col-12">');
             $openingTag = $this->buildOpeningTag('ul', [], $continuationClasses);
 
             $this->structureAppend(self::CONTENT_TYPE_HTML, $openingTag);
@@ -1763,7 +1645,6 @@ class ParserCommandOriginal extends Command
             }
 
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</ul>');
-            //$this->createStructureElement(self::CONTENT_TYPE_HTML, '</div>');
 
 
         }
@@ -1781,11 +1662,6 @@ class ParserCommandOriginal extends Command
                 $this->structureAppend(self::CONTENT_TYPE_HTML, $listHtml);
             }
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
-
-            /*
-            $this->createStructureElement(self::CONTENT_TYPE_HTML, '<li class="' . $col_class_add . '">');
-            $this->createStructureElement(self::CONTENT_TYPE_HTML, '</li>');
-            */
 
         }
 
@@ -1898,92 +1774,6 @@ class ParserCommandOriginal extends Command
             $this->structureAppend(self::CONTENT_TYPE_HTML, '</div>');
         }
     }
-
-
-    /**
-     * Перебираем отдельный элемент
-     */
-    //public function parseElement ($bbox, $element, $col_class_add = '')
-    public function parseElement ($bbox, $element, $classes_parent = [], $classes_child = [], $is_with_parent = true)
-    {
-
-        if ($element['block_type'] == 'SectionHeader')
-        {
-            // Не обрабатываем элементы которые пустые
-            if (!strlen(trim($element['html']))) return false;
-
-            [$element_tag, $element_text] = $this->parseElementsHtml($element['html']);
-
-            if ($is_with_parent) $this->createStructureElement(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes_child) . '">');
-            $this->createStructureElement(self::CONTENT_TYPE_HTML, '<' . $element_tag . '>');
-            $this->createStructureElement(self::CONTENT_TYPE_SECTION, '<span>' . $element_text . '</span>');
-            $this->createStructureElement(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
-            if ($is_with_parent) $this->createStructureElement(self::CONTENT_TYPE_HTML, '</div>');
-        }
-
-        elseif ($element['block_type'] == 'Text')
-        {
-            // Не обрабатываем элементы которые пустые
-            if (!strlen(trim($element['html']))) return false;
-
-            [$element_tag, $element_text] = $this->parseElementsHtml($element['html']);
-
-            //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<div class="col-12">');
-            if ($is_with_parent) $this->createStructureElement(self::CONTENT_TYPE_HTML, '<div class="' . implode(' ', $classes_child) . '">');
-            $this->createStructureElement(self::CONTENT_TYPE_HTML, '<' . $element_tag . '>');
-            $this->createStructureElement(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>');
-            $this->createStructureElement(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
-            if ($is_with_parent) $this->createStructureElement(self::CONTENT_TYPE_HTML, '</div>');
-        }
-
-        elseif ($element['block_type'] == 'ListGroup')
-        {
-            // Не обрабатываем элементы которые пустые
-            if (!strlen(trim($element['html']))) return false;
-            // Не обрабатываем где нет дочерних элементов
-            if (!count($element['children'])) return false;
-
-            //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<div class="col-12">');
-            //$this->createStructureElement(self::CONTENT_TYPE_HTML, '<ul class="col-12">');
-            $this->createStructureElement(self::CONTENT_TYPE_HTML, '<ul class="' . implode(' ', $classes_child) . '">');
-
-            $this->parseElements($element['bbox'], $element['children'], $classes_parent, $classes_child);
-
-            $this->createStructureElement(self::CONTENT_TYPE_HTML, '</ul>');
-            //$this->createStructureElement(self::CONTENT_TYPE_HTML, '</div>');
-
-        }
-
-        elseif ($element['block_type'] == 'ListItem')
-        {
-            $this->calcParentAndChildrenClasses($bbox, $element['bbox'], $classes_parent, $classes_child);
-            [$element_tag, $element_text, $nested_lists] = $this->parseListItemWithNestedLists($element['html']);
-
-            $this->createStructureElement(self::CONTENT_TYPE_HTML, '<' . $element_tag . ' class="' . implode(' ', $classes_child) . '">');
-            $this->createStructureElement(self::CONTENT_TYPE_TEXT, '<span>' . $element_text . '</span>');
-            foreach ($nested_lists as $listHtml) {
-                $this->createStructureElement(self::CONTENT_TYPE_HTML, $listHtml);
-            }
-            $this->createStructureElement(self::CONTENT_TYPE_HTML, '</' . $element_tag . '>');
-
-            /*
-            $this->createStructureElement(self::CONTENT_TYPE_HTML, '<li class="' . $col_class_add . '">');
-            $this->createStructureElement(self::CONTENT_TYPE_HTML, '</li>');
-            */
-
-        }
-
-        elseif ($element['block_type'] == 'Picture')
-        {
-            if (empty($element['images'])) return  false;
-
-            foreach ($element['images'] as $image_key => $image_path)
-            {
-                $this->createStructureElement(self::CONTENT_TYPE_IMAGE, '<img src="../images/' . $image_path . '">');
-            }
-        }
-    }
-
 
 
     /**
@@ -2235,28 +2025,6 @@ class ParserCommandOriginal extends Command
 
         return abs($parent['bbox'][self::BBOX_POSITION_RIGHT] - $childs_width) < $tolerance;
     }
-
-
-    /**
-     * Расчитываем, имеет ли значение отступ между блоками для принятия решения
-     */
-    public function calcIsMultipleSpaceBetween ($elements, $tolerance = 10)
-    {
-        $space_main = 0;
-        for ($i = 0; $i < count($elements) - 1; $i++)
-        {
-            $index_1 = $i;
-            $index_2 = $i + 1;
-            $space_compare = $elements[$index_1]['bbox'][self::BBOX_POSITION_RIGHT] - $elements[$index_2]['bbox'][self::BBOX_POSITION_LEFT];
-
-            $space = max($space_main, $space_compare);
-        }
-
-        $space = $space - $tolerance;
-
-        return ($space < 1) ? false : $space;
-    }
-
 
 
     /**
@@ -2585,38 +2353,6 @@ class ParserCommandOriginal extends Command
 
 
 
-/*
-'id' => '',
-        'element_type' => '',
-        'page' => null,
-        'parent_id' => null,
-        'paragraph' => null,
-        'sequence' => null,
-        'text' => null,
-        'synthesized_text' => null,
-        'image_path' => null,*/
-
-    public function createStructureElement ($type, $html) : array
-    {
-        self::$strukturesId += 1;
-
-        $template = self::$template_element;
-
-        $template['id'] = self::$strukturesId;
-        $template['page'] = self::$strukturesPage;
-        $template['element_type'] = $type;
-        $template['text'] = $html;
-        $template['synthesized_text'] = strip_tags($html);
-
-        $hasEndContinuation = is_string($html) && stripos($html, 'end-continuation') !== false;
-        $template['sequence'] = $hasEndContinuation ? 1 : null;
-
-        self::$struktures[] = $template;
-
-        return $template;
-    }
-
-
     /**
      * Заменяет функцию сверху
      */
@@ -2746,19 +2482,6 @@ class ParserCommandOriginal extends Command
     }
 
     /**
-     * Поиск последнего ребенка в пересобранном массиве
-     */
-    public function getClusterLastChildrenByPage ($page)
-    {
-        if (!isset(self::$clusters[$page]) || !isset(self::$clusters[$page]['children']) || count(self::$clusters[$page]['children']))
-        {
-            return false;
-        }
-
-        return end(self::$clusters[$page]['children']);
-    }
-
-    /**
      * Проверяем и отсекаем элементы, которые похожи на нумерацию страниц,
      * чтобы они нам не мешали при разбеорке сетки
      */
@@ -2820,21 +2543,10 @@ class ParserCommandOriginal extends Command
 
                 if ($this->isBboxesIntersects(self::$pageNumbersRange[$this->checkPageParity($real_page)], $json_page_children_data['bbox']))
                 {
-                    self::$deletedPageNumbersElements[$real_page][] = [
-                        'bbox' => $json_page_children_data['bbox'],
-                        'html' => $json_page_children_data['html'],
-                    ];
                     unset(self::$fileContent['children'][$json_page_key]['children'][$json_page_children_key]);
                 }
             }
         }
-    }
-
-    // ЭТО НАДО ДОБАВИТЬ ОБЯЗАТЕЛЬНО
-    // Необходимо чистить пустые элементы
-    public function cleanEmptyHtml ()
-    {
-
     }
 
     /**
@@ -2910,23 +2622,6 @@ class ParserCommandOriginal extends Command
     }
 
     /**
-     * Посчитать есть ли пересечение у BBOX
-     */
-    public function isBboxIntersectsByWidth ($bbox1, $bbox2)
-    {
-        $intersectsX = ($bbox1[self::BBOX_POSITION_LEFT] <= $bbox2[self::BBOX_POSITION_RIGHT]) && ($bbox1[self::BBOX_POSITION_RIGHT] >= $bbox2[self::BBOX_POSITION_LEFT]);
-
-        if (!$intersectsX) {
-            return false;
-        }
-
-        return true;
-    }
-
-
-
-
-    /**
      * Сравнение элементов с BBOX по всем возможным вариациям,
      * которые нам могут пригодиться
      */
@@ -2986,51 +2681,6 @@ class ParserCommandOriginal extends Command
         usort($elements, function ($a, $b) {
             return ($a['bbox'][1] <=> $b['bbox'][1]) ?: ($a['bbox'][0] <=> $b['bbox'][0]);
         });
-    }
-
-    public function bboxesSortByPositionsTopLeftNew (&$elements)
-    {
-        usort($elements, function($a, $b) {
-    // Сначала сравниваем по координате Y (вертикальное положение)
-    if ($a['bbox'][1] != $b['bbox'][1]) {
-        return $a['bbox'][1] - $b['bbox'][1]; // по возрастанию Y (сверху вниз)
-    }
-
-    // Если Y одинаковы, сравниваем по координате X (горизонтальное положение)
-    return $a['bbox'][0] - $b['bbox'][0]; // по возрастанию X (слева направо)
-});
-    }
-
-
-    public function sortBboxesByCoordPosition (&$bboxes, $position)
-    {
-        usort($bboxes, function ($a, $b) use($position) {
-
-            $aVal = is_array($a) && isset($a['bbox'][$position]) ? $a['bbox'][$position] : PHP_INT_MAX;
-            $bVal = is_array($b) && isset($b['bbox'][$position]) ? $b['bbox'][$position] : PHP_INT_MAX;
-
-            return $aVal <=> $bVal;
-        });
-    }
-
-
-    /**
-     * Расчитать общую область для BBOX
-     */
-    public function calcBboxesArea ($bboxes)
-    {
-        foreach ($bboxes as $bbox)
-        {
-            if (!isset($result))
-            {
-                $result = $bbox['bbox'];
-                continue;
-            }
-
-            $result = $this->mergeBboxes($result, $bbox['bbox']);
-        }
-
-        return $result;
     }
 
     /**
@@ -3143,37 +2793,6 @@ class ParserCommandOriginal extends Command
         ];
 
         return $row;
-    }
-
-    public function clusterAddChildrenToBlock (&$clusters, $claster_key, $children)
-    {
-        if (empty($clusters[$claster_key]['bbox']))
-        {
-            $clusters[$claster_key]['children'] = $children;
-            $clusters[$claster_key]['bbox'] = $children['bbox'];
-
-        }
-        else
-        {
-            $clusters[$claster_key]['children'] = $children;
-            $clusters[$claster_key]['bbox'] = $children['bbox'];
-        }
-    }
-
-    /**
-     * Найти кластер для пересечений по ширине
-     */
-    public function clusterFindKeyIsIntersectByWitdh ($clusters, $bbox)
-    {
-        foreach ($clusters as $cluster_key => $cluster)
-        {
-            if ($this->isBboxIntersectsByWidth($cluster['bbox'], $bbox))
-            {
-                return $cluster_key;
-            }
-        }
-
-        return false;
     }
 
     /**
